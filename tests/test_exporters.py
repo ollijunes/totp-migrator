@@ -129,6 +129,18 @@ class ExporterTests(unittest.TestCase):
                 account = TotpAccount("x", "", SYNTHETIC_SECRET, algorithm, digits, period)
                 self.assertIn("only SHA1, 6-digit, 30-second", lastpass_limit(account))
 
+    def test_lastpass_refuses_formula_like_names(self) -> None:
+        for name, issuer in (
+            ("=cmd|' /C calc'!A0", ""),
+            ("@alice", ""),
+            ("bob", "+Evil"),
+            ("-1", ""),
+        ):
+            with self.subTest(name=name, issuer=issuer):
+                account = TotpAccount(name, issuer, SYNTHETIC_SECRET)
+                self.assertIn("formula", lastpass_limit(account))
+        self.assertIsNone(lastpass_limit(TotpAccount("a=b", "Example", SYNTHETIC_SECRET)))
+
     def test_unicode_survives(self) -> None:
         account = TotpAccount("käyttäjä", "Ääkköset Oy", SYNTHETIC_SECRET)
         for name, exporter in EXPORTERS.items():
