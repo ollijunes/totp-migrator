@@ -3,35 +3,37 @@
 Rules that hold everywhere in this module:
 
 * Without ``--reveal`` nothing secret reaches stdout or stderr. Every
-  message about accounts passes ``ensure_redacted`` on its way out, and
-  error messages carry only positions and fixed descriptions.
+  message about accounts passes the ``Redactor`` on its way out, and
+  error messages carry only positions and fixed descriptions. Nothing the
+  user typed is printed back: not argument values, not the output path.
 * URIs are read from a file or a pipe, never from argv (shell history,
   process listings) and never from an interactive terminal (echo,
   scrollback).
+* ``export`` validates every message it will print before it creates the
+  file, so a refused message never leaves a half-finished run behind.
 """
 
 from __future__ import annotations
 
 import argparse
-import io
+import contextlib
 import json
 import os
 import sys
 import time
 from collections.abc import Sequence
-from contextlib import redirect_stderr
+from typing import NoReturn
 
 from . import __version__
 from .errors import MigratorError
 from .exporters import EXPORTERS
 from .model import TotpAccount
 from .otpauth import build_otpauth_uri
-from .reader import ReadResult, SkippedEntry, read_accounts
-from .redaction import ensure_redacted
+from .reader import ReadResult, read_accounts
+from .redaction import Redactor
 from .totp import current_code
 
 MAX_INPUT_BYTES = 1024 * 1024
-COMMANDS = ("decode", "export")
 
 REVEAL_WARNING = (
     "warning: --reveal prints TOTP secrets. Anyone who sees them, or the "
@@ -47,7 +49,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             "(arguments end up in shell history and process listings)"
         )
         return 2
-    args = _parse_args(argv)
+    args = _build_parser().parse_args(argv)
     try:
         return args.handler(args)
     except MigratorError as error:
@@ -64,31 +66,24 @@ def _looks_like_uri(arg: str) -> bool:
     return "://" in arg or arg.lower().startswith(("otpauth:", "otpauth-migration:"))
 
 
-def _parse_args(argv: list[str]) -> argparse.Namespace:
-    """Parse argv, hiding argument values in argparse's error messages.
+class _Parser(argparse.ArgumentParser):
+    """argparse quotes the offending value in its error messages.
 
-    argparse quotes the offending value, so a secret pasted as an argument
-    by mistake would be printed back.
+    A secret pasted as an argument by mistake would be printed back, so
+    usage errors show the usage line and a fixed message instead.
     """
-    captured = io.StringIO()
-    try:
-        with redirect_stderr(captured):
-            return _build_parser().parse_args(argv)
-    finally:
-        sys.stderr.write(_hide_values(captured.getvalue(), argv))
 
-
-def _hide_values(text: str, argv: list[str]) -> str:
-    known = {*COMMANDS, *EXPORTERS}
-    values = {arg.partition("=")[2] if arg.startswith("-") else arg for arg in argv}
-    for value in sorted(values - known, key=len, reverse=True):
-        if len(value) >= 8:
-            text = text.replace(value, "<hidden>")
-    return text
+    def error(self, message: str) -> NoReturn:
+        self.print_usage(sys.stderr)
+        self.exit(
+            2,
+            f"{self.prog}: error: invalid or missing arguments; values are not shown "
+            "in case one is a secret. See --help.\n",
+        )
 
 
 def _build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(
+    parser = _Parser(
         prog="totp-migrator",
         description=(
             "Move TOTP accounts out of Google Authenticator or otpauth:// URIs "
@@ -144,13 +139,15 @@ def _add_common_arguments(parser: argparse.ArgumentParser) -> None:
 
 def _run_decode(args: argparse.Namespace) -> int:
     result = _read(args.input)
+    redactor = Redactor(result.secrets)
+    notes = _notes(result, redactor, reveal=args.reveal)
     if args.reveal:
         _error(REVEAL_WARNING)
     now = int(time.time())
     rows = [_describe(account, reveal=args.reveal, now=now) for account in result.accounts]
     text = json.dumps(rows, ensure_ascii=False, indent=2) + "\n" if args.json else _table(rows)
-    sys.stdout.write(text if args.reveal else ensure_redacted(text, result.secrets))
-    _report(result, reveal=args.reveal)
+    sys.stdout.write(text if args.reveal else redactor.ensure_redacted(text))
+    _write_notes(notes)
     return 0
 
 
@@ -162,13 +159,16 @@ def _run_export(args: argparse.Namespace) -> int:
             "or add --reveal to write to stdout"
         )
     result = _read(args.input)
+    redactor = Redactor(result.secrets)
+    notes = _notes(result, redactor, reveal=args.reveal)
     if result.skipped and not args.skip_unsupported:
-        _report_skipped(result)
+        _write_notes(_skipped_notes(result, redactor))
         raise MigratorError(
             f"{len(result.skipped)} account(s) cannot be exported; "
             "pass --skip-unsupported to export the rest"
         )
     if not result.accounts:
+        _write_notes(_skipped_notes(result, redactor))
         raise MigratorError("no accounts to export")
 
     content = EXPORTERS[args.format](result.accounts)
@@ -177,14 +177,12 @@ def _run_export(args: argparse.Namespace) -> int:
         sys.stdout.write(content)
     else:
         _create_private_file(args.output, content)
-    _report(result, reveal=args.reveal)
-    if not to_stdout:
         access = "readable only by you" if os.name == "posix" else "permissions follow its folder"
-        _note(
-            f"Wrote {args.format} import file {args.output} ({access}). It holds your "
-            "secrets: import it, check the codes, then delete it.",
-            result,
+        notes.append(
+            f"Wrote the {args.format} import file ({access}). It holds your secrets: "
+            "import it, check the codes, then delete it."
         )
+    _write_notes(notes)
     return 0
 
 
@@ -222,8 +220,14 @@ def _create_private_file(path: str, content: str) -> None:
         raise MigratorError("the output file already exists; refusing to overwrite it") from None
     except OSError as error:
         raise MigratorError(f"cannot create the output file: {error.strerror}") from None
-    with os.fdopen(descriptor, "w", encoding="utf-8", newline="\n") as handle:
-        handle.write(content)
+    try:
+        with os.fdopen(descriptor, "w", encoding="utf-8", newline="\n") as handle:
+            handle.write(content)
+    except OSError as error:
+        # Never leave a half-written secret file behind.
+        with contextlib.suppress(OSError):
+            os.unlink(path)
+        raise MigratorError(f"cannot write the output file: {error.strerror}") from None
 
 
 def _describe(account: TotpAccount, *, reveal: bool, now: int) -> dict[str, object]:
@@ -255,7 +259,8 @@ def _table(rows: list[dict[str, object]]) -> str:
     )
 
 
-def _report(result: ReadResult, *, reveal: bool) -> None:
+def _notes(result: ReadResult, redactor: Redactor, *, reveal: bool) -> list[str]:
+    """Every stderr line about the run, each already checked by the redactor."""
     summary = f"{len(result.accounts)} account(s)"
     if result.qr_codes:
         summary += f" from {result.qr_codes} Google Authenticator QR code(s)"
@@ -263,28 +268,25 @@ def _report(result: ReadResult, *, reveal: bool) -> None:
         summary += f", {result.repeated_lines} repeated line(s) read once"
     if result.duplicate_accounts:
         summary += f", {result.duplicate_accounts} duplicate account(s) kept once"
-    _note(summary + ".", result)
-    _report_skipped(result)
+    notes = [redactor.ensure_redacted(summary + "."), *_skipped_notes(result, redactor)]
     if not reveal:
-        _note("Secrets are hidden. Add --reveal to show them.", result)
+        notes.append("Secrets are hidden. Add --reveal to show them.")
+    return notes
 
 
-def _report_skipped(result: ReadResult) -> None:
+def _skipped_notes(result: ReadResult, redactor: Redactor) -> list[str]:
+    """Name each skipped account, unless its label itself contains a secret."""
+    notes = []
     for entry in result.skipped:
-        _note(_skipped_message(entry, result), result)
+        named = f"skipped {entry.location} ({entry.account.label}): {entry.account.reason}"
+        if redactor.contains_secret(named):
+            named = f"skipped {entry.location} (name hidden): {entry.account.reason}"
+        notes.append(redactor.ensure_redacted(named))
+    return notes
 
 
-def _skipped_message(entry: SkippedEntry, result: ReadResult) -> str:
-    """Name the skipped account, unless its label itself contains a secret."""
-    named = f"skipped {entry.location} ({entry.account.label}): {entry.account.reason}"
-    try:
-        return ensure_redacted(named, result.secrets)
-    except MigratorError:
-        return f"skipped {entry.location} (name hidden): {entry.account.reason}"
-
-
-def _note(message: str, result: ReadResult) -> None:
-    sys.stderr.write(ensure_redacted(message, result.secrets) + "\n")
+def _write_notes(notes: list[str]) -> None:
+    sys.stderr.write("".join(note + "\n" for note in notes))
 
 
 def _error(message: str) -> None:

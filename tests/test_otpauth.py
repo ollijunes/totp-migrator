@@ -53,7 +53,6 @@ class ParseTests(unittest.TestCase):
             f"otpauth://totp/Example:x?secret={RFC_SHA1_BASE32}&digits=10",
             f"otpauth://totp/Example:x?secret={RFC_SHA1_BASE32}&period=3601",
             f"otpauth://totp/Example:x?secret={RFC_SHA1_BASE32}&period=0",
-            "otpauth://totp/Example:x?secret=AAAAAAAA",
             f"otpauth://totp/Example:x?secret={RFC_SHA1_BASE32}&issuer=Exa%3Ample",
         ]
         for uri in cases:
@@ -84,6 +83,7 @@ class ParseTests(unittest.TestCase):
         cases = {
             "otpauth://totp/x": "no secret",
             "otpauth://totp/x?secret=1189": "not valid base32",
+            "otpauth://totp/x?secret=AAAAAAAA": "secret must be 8-256 bytes long",
             f"otpauth://totp/x?secret={RFC_SHA1_BASE32}&secret=AAAA": "repeats a query",
             f"otpauth://totp/x?secret={RFC_SHA1_BASE32}&period=-30": "positive integer",
             f"otpauth://totp/x?secret={RFC_SHA1_BASE32}&period=" + "9" * 20: "positive integer",

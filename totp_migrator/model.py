@@ -12,9 +12,11 @@ ALGORITHMS = ("SHA1", "SHA256", "SHA512")
 DIGITS = (6, 7, 8)
 DEFAULT_PERIOD = 30
 MAX_PERIOD = 3600
-# 80 bits: the shortest secret in common use, and long enough that the
-# redaction guard can recognise every encoding of it.
-MIN_SECRET_BYTES = 10
+# RFC 4226 asks for 128 bits, most services issue 80 or 160, and 64-bit
+# secrets exist. Anything shorter is rejected outright rather than skipped,
+# so every secret that reaches the reporting path is long enough for the
+# redaction guard to recognise in any encoding.
+MIN_SECRET_BYTES = 8
 MAX_SECRET_BYTES = 256
 MAX_TEXT_LENGTH = 256
 
@@ -41,15 +43,12 @@ class TotpAccount:
 
     def __post_init__(self) -> None:
         check_label_text(self.name, self.issuer)
+        check_secret_length(self.secret)
         if not self.name.strip():
             raise UnsupportedValue("account has no name")
         if ":" in self.issuer:
             # The Key Uri Format forbids this; a colon would split the label wrongly.
             raise UnsupportedValue("issuer contains ':'")
-        if not MIN_SECRET_BYTES <= len(self.secret) <= MAX_SECRET_BYTES:
-            raise UnsupportedValue(
-                f"secret must be {MIN_SECRET_BYTES}-{MAX_SECRET_BYTES} bytes long"
-            )
         if self.algorithm not in ALGORITHMS:
             raise UnsupportedValue("unsupported hash algorithm")
         if self.digits not in DIGITS:
@@ -87,6 +86,7 @@ class SkippedAccount:
 
     def __post_init__(self) -> None:
         check_label_text(self.name, self.issuer)
+        check_secret_length(self.secret)
 
     @property
     def label(self) -> str:
@@ -123,9 +123,14 @@ def split_label(label: str, issuer: str) -> tuple[str, str]:
     prefix, rest = prefix.strip(), rest.strip()
     if not issuer:
         return prefix, rest
-    if prefix == issuer:
+    if prefix.casefold() == issuer.casefold():
         return issuer, rest
     return issuer, label.strip()
+
+
+def check_secret_length(secret: bytes) -> None:
+    if not MIN_SECRET_BYTES <= len(secret) <= MAX_SECRET_BYTES:
+        raise MigratorError(f"secret must be {MIN_SECRET_BYTES}-{MAX_SECRET_BYTES} bytes long")
 
 
 def check_label_text(name: str, issuer: str) -> None:
