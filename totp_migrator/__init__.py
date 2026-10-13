@@ -5,4 +5,4 @@ exports the accounts for 1Password, Bitwarden/Vaultwarden, Aegis, or as
 plain otpauth:// URIs. Nothing leaves the machine.
 """
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
