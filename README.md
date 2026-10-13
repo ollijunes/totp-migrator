@@ -153,11 +153,18 @@ URI for each account, for your own scripts.
 
 </details>
 
-The formats follow each app's own unencrypted export format. The tests
-check their structure, not an import into every app version, so compare a
-few codes after importing, and please
+**Tested with**
+
+| Target | Status |
+|---|---|
+| 1Password | The predecessor of this tool moved the author's own Google Authenticator accounts into 1Password with `op` 2.39, using the same item template (Login with an OTP field, created over stdin). Every code matched. |
+| Bitwarden / Vaultwarden | Structure checked against the Bitwarden client's JSON importer source. Not yet imported. |
+| Aegis | Matches Aegis's documented plain vault format (`docs/vault.md`, db version 3). Not yet imported. |
+
+Whichever app you use, compare a few codes after importing, and please
 [open an issue](https://github.com/ollijunes/totp-migrator/issues/new/choose)
-if an app rejects a file.
+if an app rejects a file. Reports of a successful import, with the app
+version, are welcome too.
 
 ## How it works
 
