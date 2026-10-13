@@ -213,7 +213,9 @@ def _read(source: str) -> ReadResult:
 
 def _create_private_file(path: str, content: str) -> None:
     """Create ``path`` exclusively, owner-only on POSIX. Windows ignores the mode."""
-    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0)
+    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
+    flags |= getattr(os, "O_NOFOLLOW", 0)  # POSIX: never write through a symlink
+    flags |= getattr(os, "O_BINARY", 0)  # Windows: keep "\n" as written
     try:
         descriptor = os.open(path, flags, 0o600)
     except FileExistsError:
@@ -257,8 +259,10 @@ def _report(result: ReadResult, *, reveal: bool) -> None:
     summary = f"{len(result.accounts)} account(s)"
     if result.qr_codes:
         summary += f" from {result.qr_codes} Google Authenticator QR code(s)"
-    if result.duplicates_removed:
-        summary += f", {result.duplicates_removed} duplicate(s) removed"
+    if result.repeated_lines:
+        summary += f", {result.repeated_lines} repeated line(s) read once"
+    if result.duplicate_accounts:
+        summary += f", {result.duplicate_accounts} duplicate account(s) kept once"
     _note(summary + ".", result)
     _report_skipped(result)
     if not reveal:

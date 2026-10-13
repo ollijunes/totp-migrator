@@ -102,6 +102,11 @@ class SkippedAccountTests(unittest.TestCase):
                 self.assertEqual(skipped.label, "Example:alice@example.test")
                 self.assertIsInstance(kept, TotpAccount)
 
+    def test_missing_name_is_skipped_under_the_issuer(self) -> None:
+        (skipped,) = parse_migration_payload(ga_payload(ga_account(name=b""))).entries
+        self.assertIsInstance(skipped, SkippedAccount)
+        self.assertEqual((skipped.label, skipped.reason), ("Example", "account has no name"))
+
     def test_skipped_labels_are_validated_too(self) -> None:
         payload = ga_payload(ga_account(name=b"evil\x1b[2Jname", otp_type=1))
         with self.assertRaises(MigratorError) as caught:

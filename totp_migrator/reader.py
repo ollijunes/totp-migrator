@@ -20,7 +20,8 @@ class ReadResult:
     accounts: tuple[TotpAccount, ...]
     skipped: tuple[SkippedEntry, ...]
     qr_codes: int
-    duplicates_removed: int
+    repeated_lines: int  # identical input lines, read once
+    duplicate_accounts: int  # identical accounts from different lines, kept once
 
     @property
     def secrets(self) -> tuple[bytes, ...]:
@@ -45,7 +46,8 @@ def read_accounts(text: str) -> ReadResult:
     repeated_lines = 0
 
     for number, line in enumerate(text.splitlines(), start=1):
-        line = line.strip()
+        # A BOM can start any line when files from a Windows editor are concatenated.
+        line = line.lstrip("﻿").strip()
         if not line or line.startswith("#"):
             continue
         if line in seen_lines:
@@ -79,5 +81,6 @@ def read_accounts(text: str) -> ReadResult:
         accounts=unique,
         skipped=tuple(skipped),
         qr_codes=len(batches),
-        duplicates_removed=repeated_lines + len(accounts) - len(unique),
+        repeated_lines=repeated_lines,
+        duplicate_accounts=len(accounts) - len(unique),
     )
