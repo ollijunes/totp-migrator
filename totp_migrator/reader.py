@@ -11,7 +11,7 @@ from .model import SkippedAccount, TotpAccount
 
 @dataclass(frozen=True)
 class SkippedEntry:
-    location: str  # "line 3" or "line 3, account 2"
+    location: str  # "line 3", "line 3, account 2" or "for lastpass"
     account: SkippedAccount
 
 

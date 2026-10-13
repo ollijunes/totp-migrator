@@ -11,10 +11,13 @@ port=${2:-8443}
 image=${3:-vaultwarden/server:1.37.4}
 
 mkdir -p "$work_dir/ssl"
+docker rm -f totp-migrator-vaultwarden >/dev/null 2>&1 || true
 openssl req -x509 -newkey rsa:2048 -nodes -days 1 \
   -subj "/CN=localhost" \
   -addext "subjectAltName=IP:127.0.0.1,DNS:localhost" \
   -keyout "$work_dir/ssl/key.pem" -out "$work_dir/ssl/cert.pem" 2>/dev/null
+# The key only protects a one-day certificate for a throwaway server on
+# localhost; the container's user must be able to read it.
 chmod 644 "$work_dir/ssl/key.pem"
 
 docker run -d --rm --name totp-migrator-vaultwarden \
