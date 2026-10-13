@@ -51,6 +51,11 @@ class PayloadTests(unittest.TestCase):
         account = only_account(parse_migration_payload(payload))
         self.assertEqual((account.issuer, account.name), ("Legacy", "bob"))
 
+    def test_issuer_prefix_matches_ignoring_case(self) -> None:
+        payload = ga_payload(ga_account(name=b"EXAMPLE:alice", issuer=b"Example"))
+        account = only_account(parse_migration_payload(payload))
+        self.assertEqual((account.issuer, account.name), ("Example", "alice"))
+
     def test_conflicting_prefix_keeps_the_whole_name(self) -> None:
         payload = ga_payload(ga_account(name=b"Other:bob"))
         account = only_account(parse_migration_payload(payload))
@@ -91,8 +96,6 @@ class SkippedAccountTests(unittest.TestCase):
             "missing algorithm": ga_account(algorithm=0),
             "missing digits": ga_account(digits=0),
             "unknown digits": ga_account(digits=3),
-            "short secret": ga_account(secret=b"\x01" * 9),
-            "empty secret": ga_account(secret=b""),
         }
         for case, account in cases.items():
             with self.subTest(case=case):
@@ -144,6 +147,14 @@ class MalformedPayloadTests(unittest.TestCase):
 
     def test_fixed64_where_an_account_belongs(self) -> None:
         self.assert_rejected(bytes([0x09]) + bytes(8), "wrong wire type")
+
+    def test_short_or_empty_secret(self) -> None:
+        for secret in (b"", b"\x01" * 7):
+            with self.subTest(length=len(secret)):
+                self.assert_rejected(
+                    ga_payload(ga_account(secret=secret)),
+                    "account 1: secret must be 8-256 bytes long",
+                )
 
     def test_invalid_utf8_name(self) -> None:
         self.assert_rejected(ga_payload(ga_account(name=b"\xff\xfe")), "UTF-8")
@@ -235,6 +246,9 @@ class BatchTests(unittest.TestCase):
         check_batches_complete(
             [self.batch(0, size=1, batch_id=1), self.batch(0, size=1, batch_id=2)]
         )
+
+    def test_single_qr_exports_without_an_id_do_not_collide(self) -> None:
+        check_batches_complete([self.batch(0, size=1, batch_id=0)] * 2)
 
 
 if __name__ == "__main__":

@@ -1,6 +1,7 @@
 """End-to-end CLI tests, focused on the privacy guarantees."""
 
 import ast
+import base64
 import io
 import json
 import os
@@ -186,6 +187,29 @@ class ExportTests(RedactionTestCase):
             self.assertFalse(path.exists())
             self.assert_no_secrets(result.everything)
 
+    def test_all_accounts_skipped_still_lists_them(self) -> None:
+        hotp_only = ga_uri(ga_payload(ga_account(name=b"hotp-user", otp_type=1)))
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory, "out.json")
+            result = run(
+                "export", "-f", "json", "-o", str(path), "--skip-unsupported", stdin=hotp_only
+            )
+            self.assertEqual(result.code, 1)
+            self.assertIn("(Example:hotp-user): only TOTP", result.stderr)
+            self.assertIn("no accounts to export", result.stderr)
+            self.assertFalse(path.exists())
+
+    def test_failed_write_leaves_no_partial_file(self) -> None:
+        with (
+            tempfile.TemporaryDirectory() as directory,
+            mock.patch("os.fdopen", side_effect=OSError(28, "No space left on device")),
+        ):
+            path = Path(directory, "out.json")
+            result = run("export", "-f", "json", "-o", str(path), "--skip-unsupported")
+            self.assertEqual(result.code, 1)
+            self.assertIn("cannot write the output file: No space left on device", result.stderr)
+            self.assertFalse(path.exists())
+
     def test_empty_input(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             result = run("export", "-f", "json", "-o", str(Path(directory, "x")), stdin="\n")
@@ -244,14 +268,22 @@ class SafetyTests(RedactionTestCase):
         self.assertEqual(result.code, 1)
         self.assertIn("refusing to read URIs from the terminal", result.stderr)
 
-    def test_argparse_errors_hide_mistyped_values(self) -> None:
+    def test_argparse_errors_never_echo_values(self) -> None:
         secret_like = secret_forms(SECOND_SECRET)[0]
-        for argv in (["export", "-f", secret_like], ["decode", f"--bogus={secret_like}"]):
-            with self.subTest(argv=argv[1]):
+        cases = (
+            (["export", "-f", secret_like], secret_like),
+            (["export", f"-f{secret_like}"], secret_like),
+            (["decode", f"--{secret_like}"], secret_like),
+            (["export", "-f", "MY"], "MY"),
+            (["export", "-f", 'ab"cd\\efghijk'], 'ab"cd'),
+        )
+        for argv, value in cases:
+            with self.subTest(argv=argv[1][:4]):
                 result = run(*argv)
                 self.assertEqual(result.code, 2)
-                self.assertIn("<hidden>", result.stderr)
-                self.assert_no_secrets(result.everything)
+                self.assertIn("usage:", result.stderr)
+                self.assertIn("values are not shown", result.stderr)
+                self.assertNotIn(value, result.everything)
 
     def test_uri_hidden_in_a_label_is_not_printed(self) -> None:
         # Codex review repro: the label is a whole percent-encoded URI, and the
@@ -290,6 +322,48 @@ class SafetyTests(RedactionTestCase):
         self.assertEqual(result.code, 1)
         self.assertIn("refusing to print", result.stderr)
         self.assertNotIn("efghijk", result.everything)
+
+    def test_short_secret_is_rejected_without_naming_it(self) -> None:
+        result = run("decode", stdin="otpauth://totp/MY?secret=MY\n")
+        self.assertEqual(result.code, 1)
+        self.assertIn("line 1: secret must be 8-256 bytes long", result.stderr)
+        self.assertNotIn("(MY)", result.stderr)
+
+    def test_base64_spelling_of_the_secret_in_a_label_is_caught(self) -> None:
+        secret = b"\xff" * 10
+        label = urllib.parse.quote(base64.b64encode(secret).decode("ascii"), safe="")
+        uri = f"otpauth://totp/{label}?secret={secret_forms(secret)[0]}"
+        result = run("decode", stdin=uri + "\n")
+        self.assertEqual(result.code, 1)
+        self.assertIn("refusing to print", result.stderr)
+        self.assertNotIn("////", result.everything)
+
+    def test_spaced_punctuation_secret_in_a_label_is_caught(self) -> None:
+        secret = b"!!!!!!!!!!"
+        label = urllib.parse.quote(" ".join("!" * 10), safe="")
+        uri = f"otpauth://totp/{label}?secret={secret_forms(secret)[0]}"
+        result = run("decode", stdin=uri + "\n")
+        self.assertEqual(result.code, 1)
+        self.assertNotIn("! !", result.everything)
+
+    def test_output_path_is_not_echoed(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory, "zq9-distinct-name.json")
+            result = run("export", "-f", "json", "-o", str(path), "--skip-unsupported")
+            self.assertEqual(result.code, 0, result.stderr)
+            self.assertIn("Wrote the json import file", result.stderr)
+            self.assertNotIn("zq9-distinct-name", result.everything)
+
+    def test_export_writes_nothing_when_a_note_would_leak(self) -> None:
+        # A secret spelled exactly like fixed summary text trips the guard.
+        # The run must fail before the file exists.
+        uri = f"otpauth://totp/x?secret={secret_forms(b'account(s)')[0]}"
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory, "out.json")
+            result = run("export", "-f", "json", "-o", str(path), stdin=uri + "\n")
+            self.assertEqual(result.code, 1)
+            self.assertIn("refusing to print", result.stderr)
+            self.assertFalse(path.exists())
 
     def test_package_imports_no_networking_modules(self) -> None:
         forbidden = {"socket", "ssl", "http", "urllib.request", "ftplib", "smtplib", "asyncio"}

@@ -66,7 +66,7 @@ def read_accounts(text: str) -> ReadResult:
             elif otpauth.is_otpauth_uri(line):
                 entries = [(location, otpauth.parse_otpauth_uri(line))]
             else:
-                raise MigratorError("expected an otpauth:// or otpauth-migration:// URI")
+                raise MigratorError("expected an otpauth or otpauth-migration URI")
         except MigratorError as error:
             raise MigratorError(f"{location}: {error}") from None
         for entry_location, entry in entries:
