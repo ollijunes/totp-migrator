@@ -23,7 +23,7 @@
 > — Olli Junes
 
 Google Authenticator exports your accounts as QR codes in its own format.
-1Password, Bitwarden, Vaultwarden and Aegis can't read them. Most converters
+1Password, Bitwarden, Vaultwarden, Aegis and LastPass can't read them. Most converters
 are web pages, so you end up pasting every two-factor secret you own into
 somebody else's JavaScript.
 
@@ -38,6 +38,7 @@ it before you trust it with your secrets.
 | Google Authenticator exports, single or multi-QR | **1Password** item templates for `op item create` |
 | `otpauth://totp/...` URIs from any authenticator | **Bitwarden / Vaultwarden** unencrypted JSON |
 | | **Aegis** plain vault |
+| | **LastPass** generic CSV |
 | | Plain `otpauth://` list, or structured JSON |
 
 ## Quick start
@@ -140,6 +141,28 @@ in Aegis's `docs/vault.md`.
 </details>
 
 <details>
+<summary><b>LastPass</b></summary>
+
+```sh
+totp-migrator export -f lastpass -o lastpass.csv accounts.txt
+```
+
+In LastPass, open **Advanced Options → Import**, choose **Generic CSV file**
+and select `lastpass.csv`. Each account becomes a password item with the
+TOTP secret key in its `totp` field.
+
+LastPass stores only the bare secret key, so it always generates SHA1,
+6-digit, 30-second codes. Accounts with other settings are listed as
+unsupported; pass `--skip-unsupported` to export the rest. LastPass's help
+pages describe TOTP in vault items as a feature some plans and admin
+policies can turn off, so check that your account shows the codes.
+
+Don't open the file in a spreadsheet app: it holds your secrets, and
+spreadsheets can treat a name starting with `=` as a formula.
+
+</details>
+
+<details>
 <summary><b>Plain URIs or JSON</b></summary>
 
 ```sh
@@ -158,7 +181,8 @@ URI for each account, for your own scripts.
 | Target | Status |
 |---|---|
 | 1Password | The predecessor of this tool moved the author's own Google Authenticator accounts into 1Password with `op` 2.39, using the same item template (Login with an OTP field, created over stdin). Every code matched. |
-| Bitwarden / Vaultwarden | Structure checked against the Bitwarden client's JSON importer source. Not yet imported. |
+| Bitwarden / Vaultwarden | Imported on every CI run into Vaultwarden 1.37.4 with the official Bitwarden CLI 2026.9.1. Every code is checked against this tool's own TOTP, including SHA256 / 8-digit / 60-second and SHA512 accounts. |
+| LastPass | On every CI run, the CSV is read by the Bitwarden CLI's LastPass importer and every code is checked. Not yet imported into LastPass itself. |
 | Aegis | Matches Aegis's documented plain vault format (`docs/vault.md`, db version 3). Not yet imported. |
 
 Whichever app you use, compare a few codes after importing, and please

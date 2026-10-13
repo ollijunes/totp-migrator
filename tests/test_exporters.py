@@ -1,3 +1,6 @@
+import base64
+import csv
+import io
 import json
 import unittest
 import uuid
@@ -5,11 +8,14 @@ import uuid
 from tests.fixtures import SYNTHETIC_SECRET
 from totp_migrator.exporters import (
     EXPORTERS,
+    LIMITS,
     export_1password,
     export_aegis,
     export_bitwarden,
     export_json,
+    export_lastpass,
     export_otpauth,
+    lastpass_limit,
 )
 from totp_migrator.model import TotpAccount
 from totp_migrator.otpauth import parse_otpauth_uri
@@ -98,6 +104,30 @@ class ExporterTests(unittest.TestCase):
         self.assertEqual(fields["STRING"]["purpose"], "USERNAME")
         self.assertEqual(fields["STRING"]["value"], "alice@example.test")
         self.assertEqual(parse_otpauth_uri(fields["OTP"]["value"]), ACCOUNTS[0])
+
+    def test_lastpass_generic_csv(self) -> None:
+        tricky = TotpAccount('name, with "quotes"', "ACME, Inc.", SYNTHETIC_SECRET)
+        rows = list(csv.DictReader(io.StringIO(export_lastpass([ACCOUNTS[0], tricky]))))
+        self.assertEqual(
+            list(rows[0]),
+            ["url", "username", "password", "totp", "extra", "name", "grouping", "fav"],
+        )
+        alice, odd = rows
+        self.assertEqual(alice["name"], "Example (alice@example.test)")
+        self.assertEqual(alice["username"], "alice@example.test")
+        self.assertEqual(alice["password"], "")
+        self.assertEqual(
+            base64.b32decode(alice["totp"] + "=" * (-len(alice["totp"]) % 8)), SYNTHETIC_SECRET
+        )
+        self.assertEqual((odd["username"], odd["name"]), (tricky.name, tricky.title))
+
+    def test_lastpass_takes_only_default_parameters(self) -> None:
+        self.assertIs(LIMITS["lastpass"], lastpass_limit)
+        self.assertIsNone(lastpass_limit(ACCOUNTS[0]))
+        for algorithm, digits, period in (("SHA256", 6, 30), ("SHA1", 8, 30), ("SHA1", 6, 60)):
+            with self.subTest(algorithm=algorithm, digits=digits, period=period):
+                account = TotpAccount("x", "", SYNTHETIC_SECRET, algorithm, digits, period)
+                self.assertIn("only SHA1, 6-digit, 30-second", lastpass_limit(account))
 
     def test_unicode_survives(self) -> None:
         account = TotpAccount("käyttäjä", "Ääkköset Oy", SYNTHETIC_SECRET)

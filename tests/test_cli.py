@@ -187,6 +187,26 @@ class ExportTests(RedactionTestCase):
             self.assertFalse(path.exists())
             self.assert_no_secrets(result.everything)
 
+    def test_lastpass_skips_accounts_it_cannot_hold(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory, "lastpass.csv")
+            blocked = run("export", "-f", "lastpass", "-o", str(path))
+            self.assertEqual(blocked.code, 1)
+            self.assertIn(
+                "skipped for lastpass (Other:bob): LastPass stores only SHA1, 6-digit, "
+                "30-second codes",
+                blocked.stderr,
+            )
+            self.assertFalse(path.exists())
+
+            result = run("export", "-f", "lastpass", "-o", str(path), "--skip-unsupported")
+            self.assertEqual(result.code, 0, result.stderr)
+            self.assertIn("1 account(s)", result.stderr)
+            self.assert_no_secrets(result.everything)
+            content = path.read_text(encoding="utf-8")
+            self.assertIn(secret_forms(SYNTHETIC_SECRET)[0], content)
+            self.assertNotIn(secret_forms(SECOND_SECRET)[0], content)
+
     def test_all_accounts_skipped_still_lists_them(self) -> None:
         hotp_only = ga_uri(ga_payload(ga_account(name=b"hotp-user", otp_type=1)))
         with tempfile.TemporaryDirectory() as directory:
