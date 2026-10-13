@@ -1,0 +1,89 @@
+"""The internal account model shared by every parser and exporter."""
+
+from __future__ import annotations
+
+import base64
+import unicodedata
+from dataclasses import dataclass, field
+
+from .errors import MigratorError
+
+ALGORITHMS = ("SHA1", "SHA256", "SHA512")
+DIGITS = (6, 7, 8)
+DEFAULT_PERIOD = 30
+MAX_PERIOD = 3600
+MAX_SECRET_BYTES = 256
+MAX_TEXT_LENGTH = 256
+
+
+@dataclass(frozen=True)
+class TotpAccount:
+    """One TOTP credential.
+
+    The secret is excluded from repr() so that an account can never leak
+    through a log line, a traceback, or an assertion message.
+    """
+
+    name: str
+    issuer: str
+    secret: bytes = field(repr=False)
+    algorithm: str = "SHA1"
+    digits: int = 6
+    period: int = DEFAULT_PERIOD
+
+    def __post_init__(self) -> None:
+        _check_text("name", self.name, required=True)
+        _check_text("issuer", self.issuer, required=False)
+        if ":" in self.issuer:
+            raise MigratorError(f"{self.label}: issuer must not contain ':'")
+        if not 1 <= len(self.secret) <= MAX_SECRET_BYTES:
+            raise MigratorError(f"{self.label}: secret must be 1-{MAX_SECRET_BYTES} bytes")
+        if self.algorithm not in ALGORITHMS:
+            raise MigratorError(f"{self.label}: unsupported algorithm")
+        if self.digits not in DIGITS:
+            raise MigratorError(f"{self.label}: digits must be 6, 7, or 8")
+        if not 1 <= self.period <= MAX_PERIOD:
+            raise MigratorError(f"{self.label}: period must be 1-{MAX_PERIOD} seconds")
+
+    @property
+    def label(self) -> str:
+        """The otpauth-style label, for example ``GitHub:octocat``."""
+        return f"{self.issuer}:{self.name}" if self.issuer else self.name
+
+    @property
+    def title(self) -> str:
+        """A human-friendly item title for password managers."""
+        return f"{self.issuer} ({self.name})" if self.issuer else self.name
+
+    @property
+    def secret_base32(self) -> str:
+        """The secret as unpadded RFC 4648 base32, the form every app accepts."""
+        return base64.b32encode(self.secret).decode("ascii").rstrip("=")
+
+
+def split_label(label: str, issuer: str) -> tuple[str, str]:
+    """Split an ``Issuer:name`` label into (issuer, name).
+
+    ``issuer`` is the explicit issuer, if the source has one. It wins over
+    the label prefix. When the prefix disagrees with it, the label is kept
+    whole as the name so no information is lost.
+    """
+    issuer = issuer.strip()
+    prefix, separator, rest = label.partition(":")
+    if not separator:
+        return issuer, label.strip()
+    prefix, rest = prefix.strip(), rest.strip()
+    if not issuer:
+        return prefix, rest
+    if prefix == issuer:
+        return issuer, rest
+    return issuer, label.strip()
+
+
+def _check_text(what: str, value: str, *, required: bool) -> None:
+    if required and not value.strip():
+        raise MigratorError(f"account {what} is empty")
+    if len(value) > MAX_TEXT_LENGTH:
+        raise MigratorError(f"account {what} is longer than {MAX_TEXT_LENGTH} characters")
+    if any(unicodedata.category(char) == "Cc" for char in value):
+        raise MigratorError(f"account {what} contains control characters")
