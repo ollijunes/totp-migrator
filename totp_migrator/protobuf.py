@@ -36,6 +36,8 @@ def read_varint(buf: bytes, index: int) -> tuple[int, int]:
         index += 1
         value |= (byte & 0x7F) << (7 * position)
         if not byte & 0x80:
+            if value >> 64:
+                raise MigratorError("protobuf varint is larger than 64 bits")
             return value, index
     raise MigratorError("protobuf varint is too long")
 

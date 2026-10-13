@@ -6,12 +6,15 @@ import base64
 import unicodedata
 from dataclasses import dataclass, field
 
-from .errors import MigratorError
+from .errors import MigratorError, UnsupportedValue
 
 ALGORITHMS = ("SHA1", "SHA256", "SHA512")
 DIGITS = (6, 7, 8)
 DEFAULT_PERIOD = 30
 MAX_PERIOD = 3600
+# 80 bits: the shortest secret in common use, and long enough that the
+# redaction guard can recognise every encoding of it.
+MIN_SECRET_BYTES = 10
 MAX_SECRET_BYTES = 256
 MAX_TEXT_LENGTH = 256
 
@@ -37,23 +40,22 @@ class TotpAccount:
     period: int = DEFAULT_PERIOD
 
     def __post_init__(self) -> None:
-        _check_text("name", self.name, required=True)
-        _check_text("issuer", self.issuer, required=False)
-        if ":" in self.issuer:
-            raise MigratorError(f"{self.label}: issuer must not contain ':'")
-        if not 1 <= len(self.secret) <= MAX_SECRET_BYTES:
-            raise MigratorError(f"{self.label}: secret must be 1-{MAX_SECRET_BYTES} bytes")
+        check_label_text(self.name, self.issuer)
+        if not MIN_SECRET_BYTES <= len(self.secret) <= MAX_SECRET_BYTES:
+            raise UnsupportedValue(
+                f"secret must be {MIN_SECRET_BYTES}-{MAX_SECRET_BYTES} bytes long"
+            )
         if self.algorithm not in ALGORITHMS:
-            raise MigratorError(f"{self.label}: unsupported algorithm")
+            raise UnsupportedValue("unsupported hash algorithm")
         if self.digits not in DIGITS:
-            raise MigratorError(f"{self.label}: digits must be 6, 7, or 8")
+            raise UnsupportedValue("codes must have 6, 7 or 8 digits")
         if not 1 <= self.period <= MAX_PERIOD:
-            raise MigratorError(f"{self.label}: period must be 1-{MAX_PERIOD} seconds")
+            raise UnsupportedValue(f"period must be 1-{MAX_PERIOD} seconds")
 
     @property
     def label(self) -> str:
         """The otpauth-style label, for example ``GitHub:octocat``."""
-        return f"{self.issuer}:{self.name}" if self.issuer else self.name
+        return _label(self.issuer, self.name)
 
     @property
     def title(self) -> str:
@@ -64,6 +66,42 @@ class TotpAccount:
     def secret_base32(self) -> str:
         """The secret as unpadded RFC 4648 base32, the form every app accepts."""
         return base64.b32encode(self.secret).decode("ascii").rstrip("=")
+
+
+@dataclass(frozen=True)
+class SkippedAccount:
+    """A well-formed account that this tool will not migrate, and why.
+
+    The secret is kept only so the redaction guard can recognise it.
+    """
+
+    name: str
+    issuer: str
+    reason: str
+    secret: bytes = field(repr=False)
+
+    def __post_init__(self) -> None:
+        check_label_text(self.name, self.issuer)
+
+    @property
+    def label(self) -> str:
+        return _label(self.issuer, self.name)
+
+
+def make_account(
+    name: str,
+    issuer: str,
+    secret: bytes,
+    *,
+    algorithm: str,
+    digits: int,
+    period: int = DEFAULT_PERIOD,
+) -> TotpAccount | SkippedAccount:
+    """Build an account, or a SkippedAccount if a value is unsupported."""
+    try:
+        return TotpAccount(name, issuer, secret, algorithm, digits, period)
+    except UnsupportedValue as unsupported:
+        return SkippedAccount(name, issuer, str(unsupported), secret)
 
 
 def split_label(label: str, issuer: str) -> tuple[str, str]:
@@ -85,6 +123,14 @@ def split_label(label: str, issuer: str) -> tuple[str, str]:
     return issuer, label.strip()
 
 
+def check_label_text(name: str, issuer: str) -> None:
+    """Reject names and issuers that are empty, huge, or could spoof a terminal."""
+    _check_text("name", name, required=True)
+    _check_text("issuer", issuer, required=False)
+    if ":" in issuer:
+        raise MigratorError("account issuer must not contain ':'")
+
+
 def _check_text(what: str, value: str, *, required: bool) -> None:
     if required and not value.strip():
         raise MigratorError(f"account {what} is empty")
@@ -92,3 +138,7 @@ def _check_text(what: str, value: str, *, required: bool) -> None:
         raise MigratorError(f"account {what} is longer than {MAX_TEXT_LENGTH} characters")
     if any(unicodedata.category(char) in _FORBIDDEN_CATEGORIES for char in value):
         raise MigratorError(f"account {what} contains control or invisible characters")
+
+
+def _label(issuer: str, name: str) -> str:
+    return f"{issuer}:{name}" if issuer else name

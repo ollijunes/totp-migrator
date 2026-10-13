@@ -9,6 +9,7 @@ import stat
 import tempfile
 import time
 import unittest
+import urllib.parse
 from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 from unittest import mock
@@ -40,9 +41,10 @@ class Result:
         return self.stdout + self.stderr
 
 
-def run(*argv: str, stdin: str = INPUT) -> Result:
+def run(*argv: str, stdin: str = INPUT, tty: bool = False) -> Result:
     """Run the CLI in-process with sockets disabled, capturing all output."""
     fake_stdin = io.TextIOWrapper(io.BytesIO(stdin.encode("utf-8")))
+    fake_stdin.isatty = lambda: tty  # type: ignore[method-assign]
     stdout, stderr = io.StringIO(), io.StringIO()
 
     def no_network(*args, **kwargs):
@@ -88,7 +90,10 @@ class DecodeTests(RedactionTestCase):
         self.assertIn("SHA256", result.stdout)
         self.assertIn("2 account(s) from 1 Google Authenticator QR code(s)", result.stderr)
         self.assertIn("1 duplicate(s) removed", result.stderr)
-        self.assertIn("skipped Example:hotp-user", result.stderr)
+        self.assertIn(
+            "skipped line 3, account 2 (Example:hotp-user): only TOTP accounts are supported",
+            result.stderr,
+        )
         self.assertIn("Secrets are hidden", result.stderr)
         self.assert_no_secrets(result.everything)
 
@@ -145,8 +150,8 @@ class ExportTests(RedactionTestCase):
                 self.assertEqual(result.code, 0, result.stderr)
                 self.assertEqual(result.stdout, "")
                 self.assert_no_secrets(result.everything)
-                self.assertIn("mode 0600", result.stderr)
                 if os.name == "posix":
+                    self.assertIn("readable only by you", result.stderr)
                     self.assertEqual(stat.S_IMODE(path.stat().st_mode), 0o600)
                 self.assertIn(secret_forms(SECOND_SECRET)[0], path.read_text(encoding="utf-8"))
 
@@ -164,7 +169,7 @@ class ExportTests(RedactionTestCase):
             path = Path(directory, "out.json")
             result = run("export", "-f", "json", "-o", str(path))
             self.assertEqual(result.code, 1)
-            self.assertIn("skipped Example:hotp-user", result.stderr)
+            self.assertIn("(Example:hotp-user): only TOTP", result.stderr)
             self.assertIn("--skip-unsupported", result.stderr)
             self.assertFalse(path.exists())
             self.assert_no_secrets(result.everything)
@@ -221,6 +226,58 @@ class SafetyTests(RedactionTestCase):
         self.assertEqual(result.code, 1)
         self.assertIn("refusing to print output that contains secret material", result.stderr)
         self.assert_no_secrets(result.everything)
+
+    def test_terminal_input_is_refused_because_it_echoes(self) -> None:
+        result = run("decode", tty=True)
+        self.assertEqual(result.code, 1)
+        self.assertIn("refusing to read URIs from the terminal", result.stderr)
+
+    def test_argparse_errors_hide_mistyped_values(self) -> None:
+        secret_like = secret_forms(SECOND_SECRET)[0]
+        for argv in (["export", "-f", secret_like], ["decode", f"--bogus={secret_like}"]):
+            with self.subTest(argv=argv[1]):
+                result = run(*argv)
+                self.assertEqual(result.code, 2)
+                self.assertIn("<hidden>", result.stderr)
+                self.assert_no_secrets(result.everything)
+
+    def test_uri_hidden_in_a_label_is_not_printed(self) -> None:
+        # Codex review repro: the label is a whole percent-encoded URI, and the
+        # account is skipped (period=0), so its label would be printed.
+        secret = secret_forms(SECOND_SECRET)[0]
+        label = urllib.parse.quote(OTPAUTH_URI, safe="")
+        uri = f"otpauth://totp/{label}?secret={secret}&period=0"
+        result = run("decode", stdin=uri + "\n")
+        self.assertEqual(result.code, 0)
+        self.assertIn("skipped line 1 (name hidden): period must be", result.stderr)
+        self.assert_no_secrets(result.everything)
+
+    def test_skipped_label_holding_its_own_secret_is_hidden(self) -> None:
+        secret = secret_forms(SECOND_SECRET)[0]
+        uri = f"otpauth://hotp/Example:{secret}?secret={secret}"
+        result = run("export", "-f", "json", "-o", "unused", stdin=uri + "\n")
+        self.assertIn("(name hidden)", result.stderr)
+        self.assert_no_secrets(result.everything)
+
+    def test_respelled_secret_in_a_label_is_caught(self) -> None:
+        secret = secret_forms(SECOND_SECRET)[0]
+        hyphenated = "-".join(secret[i : i + 4] for i in range(0, len(secret), 4))
+        uri = f"otpauth://totp/Example:{hyphenated}?secret={secret}"
+        for argv in (["decode"], ["decode", "--json"]):
+            with self.subTest(argv=argv):
+                result = run(*argv, stdin=uri + "\n")
+                self.assertEqual(result.code, 1)
+                self.assertIn("refusing to print", result.stderr)
+                self.assertNotIn(hyphenated, result.everything)
+
+    def test_json_escaped_raw_secret_is_caught(self) -> None:
+        raw = b'ab"cd\\efghijk'
+        b32 = secret_forms(raw)[0]
+        uri = f"otpauth://totp/Example:{urllib.parse.quote(raw)}?secret={b32}"
+        result = run("decode", "--json", stdin=uri + "\n")
+        self.assertEqual(result.code, 1)
+        self.assertIn("refusing to print", result.stderr)
+        self.assertNotIn("efghijk", result.everything)
 
     def test_package_imports_no_networking_modules(self) -> None:
         forbidden = {"socket", "ssl", "http", "urllib.request", "ftplib", "smtplib", "asyncio"}
