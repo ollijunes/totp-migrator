@@ -5,16 +5,29 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from . import google, otpauth
-from .errors import MigratorError, UnsupportedAccount
-from .model import TotpAccount
+from .errors import MigratorError
+from .model import SkippedAccount, TotpAccount
+
+
+@dataclass(frozen=True)
+class SkippedEntry:
+    location: str  # "line 3" or "line 3, account 2"
+    account: SkippedAccount
 
 
 @dataclass(frozen=True)
 class ReadResult:
     accounts: tuple[TotpAccount, ...]
-    skipped: tuple[UnsupportedAccount, ...]
-    qr_batches: int
+    skipped: tuple[SkippedEntry, ...]
+    qr_codes: int
     duplicates_removed: int
+
+    @property
+    def secrets(self) -> tuple[bytes, ...]:
+        """Every secret seen, including skipped accounts, for the redaction guard."""
+        return tuple(account.secret for account in self.accounts) + tuple(
+            entry.account.secret for entry in self.skipped
+        )
 
 
 def read_accounts(text: str) -> ReadResult:
@@ -26,39 +39,45 @@ def read_accounts(text: str) -> ReadResult:
     number, never the line content.
     """
     accounts: list[TotpAccount] = []
-    skipped: list[UnsupportedAccount] = []
+    skipped: list[SkippedEntry] = []
     batches: list[google.MigrationBatch] = []
     seen_lines: set[str] = set()
     repeated_lines = 0
 
     for number, line in enumerate(text.splitlines(), start=1):
-        line = line.strip().lstrip("\ufeff")
+        line = line.strip()
         if not line or line.startswith("#"):
             continue
         if line in seen_lines:
             repeated_lines += 1
             continue
         seen_lines.add(line)
+        location = f"line {number}"
         try:
             if google.is_migration_uri(line):
                 batch = google.parse_migration_uri(line)
                 batches.append(batch)
-                accounts.extend(batch.accounts)
-                skipped.extend(batch.skipped)
+                entries = [
+                    (f"{location}, account {index}", entry)
+                    for index, entry in enumerate(batch.entries, start=1)
+                ]
             elif otpauth.is_otpauth_uri(line):
-                accounts.append(otpauth.parse_otpauth_uri(line))
+                entries = [(location, otpauth.parse_otpauth_uri(line))]
             else:
                 raise MigratorError("expected an otpauth:// or otpauth-migration:// URI")
-        except UnsupportedAccount as unsupported:
-            skipped.append(unsupported)
         except MigratorError as error:
-            raise MigratorError(f"line {number}: {error}") from None
+            raise MigratorError(f"{location}: {error}") from None
+        for entry_location, entry in entries:
+            if isinstance(entry, SkippedAccount):
+                skipped.append(SkippedEntry(entry_location, entry))
+            else:
+                accounts.append(entry)
 
     google.check_batches_complete(batches)
     unique = tuple(dict.fromkeys(accounts))
     return ReadResult(
         accounts=unique,
         skipped=tuple(skipped),
-        qr_batches=len(batches),
+        qr_codes=len(batches),
         duplicates_removed=repeated_lines + len(accounts) - len(unique),
     )

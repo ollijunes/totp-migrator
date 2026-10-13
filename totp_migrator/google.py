@@ -21,13 +21,13 @@ from __future__ import annotations
 
 import base64
 import binascii
-import urllib.parse
 from collections import defaultdict
 from dataclasses import dataclass
 
 from . import protobuf
-from .errors import MigratorError, UnsupportedAccount
-from .model import TotpAccount, split_label
+from .errors import MigratorError
+from .model import SkippedAccount, TotpAccount, make_account, split_label
+from .urltext import strict_unquote
 
 SCHEME = "otpauth-migration"
 MAX_PAYLOAD_BYTES = 64 * 1024
@@ -44,10 +44,12 @@ _PAYLOAD_SCALARS = range(2, 6)
 
 @dataclass(frozen=True)
 class MigrationBatch:
-    """One QR code's worth of a Google Authenticator export."""
+    """One QR code's worth of a Google Authenticator export.
 
-    accounts: tuple[TotpAccount, ...]
-    skipped: tuple[UnsupportedAccount, ...]
+    ``entries`` keeps payload order; each is an account or a skipped one.
+    """
+
+    entries: tuple[TotpAccount | SkippedAccount, ...]
     version: int
     batch_size: int
     batch_index: int
@@ -71,8 +73,9 @@ def parse_migration_uri(uri: str) -> MigrationBatch:
     values = [part[5:] for part in query.split("&") if part.startswith("data=")]
     if len(values) != 1 or not values[0]:
         raise MigratorError("migration URI must have exactly one data parameter")
-    # unquote, not unquote_plus: '+' is a base64 character, not a space.
-    return parse_migration_payload(_decode_base64(urllib.parse.unquote(values[0])))
+    # '+' is a base64 character here, not an encoded space.
+    data = strict_unquote(values[0], plus_is_space=False)
+    return parse_migration_payload(_decode_base64(data))
 
 
 def parse_migration_payload(payload: bytes) -> MigrationBatch:
@@ -106,16 +109,14 @@ def parse_migration_payload(payload: bytes) -> MigrationBatch:
     if batch_size < 1 or not 0 <= batch_index < batch_size:
         raise MigratorError("migration payload has an invalid batch position")
 
-    accounts: list[TotpAccount] = []
-    skipped: list[UnsupportedAccount] = []
-    for raw in raw_accounts:
+    entries = []
+    for number, raw in enumerate(raw_accounts, start=1):
         try:
-            accounts.append(_parse_account(raw))
-        except UnsupportedAccount as unsupported:
-            skipped.append(unsupported)
+            entries.append(_parse_account(raw))
+        except MigratorError as error:
+            raise MigratorError(f"account {number}: {error}") from None
     return MigrationBatch(
-        accounts=tuple(accounts),
-        skipped=tuple(skipped),
+        entries=tuple(entries),
         version=version,
         batch_size=batch_size,
         batch_index=batch_index,
@@ -139,49 +140,45 @@ def check_batches_complete(batches: list[MigrationBatch]) -> None:
             raise MigratorError(f"export {batch_id}: QR codes disagree on the batch size")
         size = sizes.pop()
         indexes = sorted(batch.batch_index for batch in group)
-        if indexes != list(range(size)):
+        # Compare counts first: the declared size is untrusted and may be huge.
+        if len(indexes) != size or indexes != list(range(len(indexes))):
             have = ", ".join(str(index + 1) for index in indexes)
             raise MigratorError(
                 f"export {batch_id}: expected QR codes 1-{size} exactly once, got {have}"
             )
 
 
-def _parse_account(raw: bytes) -> TotpAccount:
+def _parse_account(raw: bytes) -> TotpAccount | SkippedAccount:
     blobs: dict[int, bytes] = {}
     ints: dict[int, int] = {}
     for field in protobuf.parse_fields(raw):
         if field.number not in _ACCOUNT_FIELDS:
-            raise MigratorError(f"account has unknown field {field.number}")
+            raise MigratorError(f"unknown field {field.number}")
         if field.number in blobs or field.number in ints:
-            raise MigratorError(f"account repeats field {field.number}")
+            raise MigratorError(f"repeated field {field.number}")
         if field.number in _BYTES_FIELDS and field.wire_type == protobuf.LENGTH_DELIMITED:
             assert isinstance(field.value, bytes)
             blobs[field.number] = field.value
         elif field.number not in _BYTES_FIELDS and field.wire_type == protobuf.VARINT:
             assert isinstance(field.value, int)
-            ints[field.number] = protobuf.as_int32(field.value)
+            ints[field.number] = field.value
         else:
-            raise MigratorError(f"account field {field.number} has the wrong wire type")
+            raise MigratorError(f"field {field.number} has the wrong wire type")
 
     issuer, name = split_label(_text(blobs.get(2, b"")), _text(blobs.get(3, b"")))
-    label = f"{issuer}:{name}" if issuer else name
-    algorithm = _ALGORITHMS.get(ints.get(4, 0))
-    digits = _DIGITS.get(ints.get(5, 0))
-    if ints.get(6, 0) != _TOTP:
-        raise UnsupportedAccount(
-            label, "only TOTP accounts are supported (this is HOTP or unknown)"
-        )
+    secret = blobs.get(1, b"")
+    # Enums are int32 on the wire. Field 7, the int64 HOTP counter, is not
+    # read: only TOTP accounts are migrated.
+    otp_type = protobuf.as_int32(ints.get(6, 0))
+    algorithm = _ALGORITHMS.get(protobuf.as_int32(ints.get(4, 0)))
+    digits = _DIGITS.get(protobuf.as_int32(ints.get(5, 0)))
+    if otp_type != _TOTP:
+        return SkippedAccount(name, issuer, "only TOTP accounts are supported", secret)
     if algorithm is None:
-        raise UnsupportedAccount(label, "unsupported or missing hash algorithm")
+        return SkippedAccount(name, issuer, "unsupported or missing hash algorithm", secret)
     if digits is None:
-        raise UnsupportedAccount(label, "unsupported or missing digit count")
-    return TotpAccount(
-        name=name,
-        issuer=issuer,
-        secret=blobs.get(1, b""),
-        algorithm=algorithm,
-        digits=digits,
-    )
+        return SkippedAccount(name, issuer, "unsupported or missing digit count", secret)
+    return make_account(name, issuer, secret, algorithm=algorithm, digits=digits)
 
 
 def _decode_base64(text: str) -> bytes:
@@ -201,4 +198,4 @@ def _text(value: bytes) -> str:
     try:
         return value.decode("utf-8")
     except UnicodeDecodeError:
-        raise MigratorError("account name or issuer is not valid UTF-8") from None
+        raise MigratorError("name or issuer is not valid UTF-8") from None
