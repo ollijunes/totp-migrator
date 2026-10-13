@@ -226,4 +226,6 @@ items.jsonl
 bitwarden.json
 aegis.json
 accounts.json
+vault.json
+lastpass.csv
 qr-*.png

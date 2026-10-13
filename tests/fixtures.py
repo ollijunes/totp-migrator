@@ -6,6 +6,7 @@ The only fixed secrets are the published RFC 6238 Appendix B seeds.
 from __future__ import annotations
 
 import base64
+import hashlib
 import urllib.parse
 
 from totp_migrator.protobuf import encode_field
@@ -16,9 +17,9 @@ RFC_SEEDS = {
     "SHA512": b"1234567890123456789012345678901234567890123456789012345678901234",
 }
 
-# A random-looking synthetic secret, so redaction tests are not fooled by
-# the printable RFC seeds.
-SYNTHETIC_SECRET = bytes.fromhex("9f3a51c2e07b44d88e1a6c3f2b905d17a4e6c8b1")
+# A random-looking secret, so redaction tests are not fooled by the printable
+# RFC seeds. Derived from a fixed phrase so anyone can see it is not a real key.
+SYNTHETIC_SECRET = hashlib.sha1(b"totp-migrator synthetic secret").digest()
 
 
 def ga_account(
