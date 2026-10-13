@@ -1,33 +1,37 @@
 """Command-line interface.
 
-Two rules hold everywhere in this module:
+Rules that hold everywhere in this module:
 
-* Without ``--reveal`` nothing secret reaches stdout or stderr, and every
-  message passes through ``ensure_redacted`` on its way out.
-* URIs are read from stdin or a file, never from argv, because arguments end
-  up in shell history and in other users' process listings.
+* Without ``--reveal`` nothing secret reaches stdout or stderr. Every
+  message about accounts passes ``ensure_redacted`` on its way out, and
+  error messages carry only positions and fixed descriptions.
+* URIs are read from a file or a pipe, never from argv (shell history,
+  process listings) and never from an interactive terminal (echo,
+  scrollback).
 """
 
 from __future__ import annotations
 
 import argparse
+import io
 import json
 import os
 import sys
 import time
 from collections.abc import Sequence
-from typing import TextIO
+from contextlib import redirect_stderr
 
 from . import __version__
 from .errors import MigratorError
 from .exporters import EXPORTERS
 from .model import TotpAccount
 from .otpauth import build_otpauth_uri
-from .reader import ReadResult, read_accounts
+from .reader import ReadResult, SkippedEntry, read_accounts
 from .redaction import ensure_redacted
 from .totp import current_code
 
 MAX_INPUT_BYTES = 1024 * 1024
+COMMANDS = ("decode", "export")
 
 REVEAL_WARNING = (
     "warning: --reveal prints TOTP secrets. Anyone who sees them, or the "
@@ -39,11 +43,11 @@ def main(argv: Sequence[str] | None = None) -> int:
     argv = list(sys.argv[1:] if argv is None else argv)
     if any(_looks_like_uri(arg) for arg in argv):
         _error(
-            "pass URIs on stdin or in a file, not as arguments "
+            "pass URIs in a file or through a pipe, not as arguments "
             "(arguments end up in shell history and process listings)"
         )
         return 2
-    args = _build_parser().parse_args(argv)
+    args = _parse_args(argv)
     try:
         return args.handler(args)
     except MigratorError as error:
@@ -58,6 +62,29 @@ def main(argv: Sequence[str] | None = None) -> int:
 
 def _looks_like_uri(arg: str) -> bool:
     return "://" in arg or arg.lower().startswith(("otpauth:", "otpauth-migration:"))
+
+
+def _parse_args(argv: list[str]) -> argparse.Namespace:
+    """Parse argv, hiding argument values in argparse's error messages.
+
+    argparse quotes the offending value, so a secret pasted as an argument
+    by mistake would be printed back.
+    """
+    captured = io.StringIO()
+    try:
+        with redirect_stderr(captured):
+            return _build_parser().parse_args(argv)
+    finally:
+        sys.stderr.write(_hide_values(captured.getvalue(), argv))
+
+
+def _hide_values(text: str, argv: list[str]) -> str:
+    known = {*COMMANDS, *EXPORTERS}
+    values = {arg.partition("=")[2] if arg.startswith("-") else arg for arg in argv}
+    for value in sorted(values - known, key=len, reverse=True):
+        if len(value) >= 8:
+            text = text.replace(value, "<hidden>")
+    return text
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -89,7 +116,7 @@ def _build_parser() -> argparse.ArgumentParser:
         "-o",
         "--output",
         metavar="FILE",
-        help="new file to create with mode 0600; never overwrites an existing file",
+        help="new file to create (owner-only on Linux and macOS); never overwrites",
     )
     export.add_argument(
         "--skip-unsupported",
@@ -106,7 +133,7 @@ def _add_common_arguments(parser: argparse.ArgumentParser) -> None:
         nargs="?",
         default="-",
         metavar="INPUT",
-        help="file with one URI per line; '-' or omitted reads stdin",
+        help="file with one URI per line; '-' or omitted reads a pipe",
     )
     parser.add_argument(
         "--reveal",
@@ -122,7 +149,7 @@ def _run_decode(args: argparse.Namespace) -> int:
     now = int(time.time())
     rows = [_describe(account, reveal=args.reveal, now=now) for account in result.accounts]
     text = json.dumps(rows, ensure_ascii=False, indent=2) + "\n" if args.json else _table(rows)
-    _write(sys.stdout, text, result.accounts, reveal=args.reveal)
+    sys.stdout.write(text if args.reveal else ensure_redacted(text, result.secrets))
     _report(result, reveal=args.reveal)
     return 0
 
@@ -152,10 +179,11 @@ def _run_export(args: argparse.Namespace) -> int:
         _create_private_file(args.output, content)
     _report(result, reveal=args.reveal)
     if not to_stdout:
+        access = "readable only by you" if os.name == "posix" else "permissions follow its folder"
         _note(
-            f"Wrote {args.format} import file {args.output} (mode 0600). It holds your "
+            f"Wrote {args.format} import file {args.output} ({access}). It holds your "
             "secrets: import it, check the codes, then delete it.",
-            result.accounts,
+            result,
         )
     return 0
 
@@ -163,14 +191,17 @@ def _run_export(args: argparse.Namespace) -> int:
 def _read(source: str) -> ReadResult:
     if source == "-":
         if sys.stdin.isatty():
-            _error("Paste URIs, one per line, then press Ctrl-D.")
+            raise MigratorError(
+                "refusing to read URIs from the terminal, where they would be echoed "
+                "on screen; pass a file, or pipe them in (for example from the clipboard)"
+            )
         raw = sys.stdin.buffer.read(MAX_INPUT_BYTES + 1)
     else:
         try:
             with open(source, "rb") as handle:
                 raw = handle.read(MAX_INPUT_BYTES + 1)
         except OSError as error:
-            raise MigratorError(f"cannot read {source}: {error.strerror}") from None
+            raise MigratorError(f"cannot read the input file: {error.strerror}") from None
     if len(raw) > MAX_INPUT_BYTES:
         raise MigratorError(f"input is larger than {MAX_INPUT_BYTES} bytes")
     try:
@@ -181,13 +212,14 @@ def _read(source: str) -> ReadResult:
 
 
 def _create_private_file(path: str, content: str) -> None:
+    """Create ``path`` exclusively, owner-only on POSIX. Windows ignores the mode."""
     flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0)
     try:
         descriptor = os.open(path, flags, 0o600)
     except FileExistsError:
-        raise MigratorError(f"{path} already exists; refusing to overwrite it") from None
+        raise MigratorError("the output file already exists; refusing to overwrite it") from None
     except OSError as error:
-        raise MigratorError(f"cannot create {path}: {error.strerror}") from None
+        raise MigratorError(f"cannot create the output file: {error.strerror}") from None
     with os.fdopen(descriptor, "w", encoding="utf-8", newline="\n") as handle:
         handle.write(content)
 
@@ -215,7 +247,7 @@ def _table(rows: list[dict[str, object]]) -> str:
     cells += [[str(row[column]) for column in columns] for row in rows]
     widths = [max(len(line[i]) for line in cells) for i in range(len(columns))]
     return "".join(
-        "  ".join(cell.ljust(width) for cell, width in zip(line, widths, strict=False)).rstrip()
+        "  ".join(cell.ljust(width) for cell, width in zip(line, widths, strict=True)).rstrip()
         + "\n"
         for line in cells
     )
@@ -223,27 +255,32 @@ def _table(rows: list[dict[str, object]]) -> str:
 
 def _report(result: ReadResult, *, reveal: bool) -> None:
     summary = f"{len(result.accounts)} account(s)"
-    if result.qr_batches:
-        summary += f" from {result.qr_batches} Google Authenticator QR code(s)"
+    if result.qr_codes:
+        summary += f" from {result.qr_codes} Google Authenticator QR code(s)"
     if result.duplicates_removed:
         summary += f", {result.duplicates_removed} duplicate(s) removed"
-    _note(summary + ".", result.accounts)
+    _note(summary + ".", result)
     _report_skipped(result)
     if not reveal:
-        _note("Secrets are hidden. Add --reveal to show them.", result.accounts)
+        _note("Secrets are hidden. Add --reveal to show them.", result)
 
 
 def _report_skipped(result: ReadResult) -> None:
-    for unsupported in result.skipped:
-        _note(f"skipped {unsupported}", result.accounts)
+    for entry in result.skipped:
+        _note(_skipped_message(entry, result), result)
 
 
-def _write(stream: TextIO, text: str, accounts: Sequence[TotpAccount], *, reveal: bool) -> None:
-    stream.write(text if reveal else ensure_redacted(text, accounts))
+def _skipped_message(entry: SkippedEntry, result: ReadResult) -> str:
+    """Name the skipped account, unless its label itself contains a secret."""
+    named = f"skipped {entry.location} ({entry.account.label}): {entry.account.reason}"
+    try:
+        return ensure_redacted(named, result.secrets)
+    except MigratorError:
+        return f"skipped {entry.location} (name hidden): {entry.account.reason}"
 
 
-def _note(message: str, accounts: Sequence[TotpAccount]) -> None:
-    _write(sys.stderr, message + "\n", accounts, reveal=False)
+def _note(message: str, result: ReadResult) -> None:
+    sys.stderr.write(ensure_redacted(message, result.secrets) + "\n")
 
 
 def _error(message: str) -> None:

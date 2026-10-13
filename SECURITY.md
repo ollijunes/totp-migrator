@@ -7,18 +7,28 @@
 2. **Nothing secret on screen by default.** Without `--reveal`, stdout and
    stderr carry only issuer, account name, algorithm, digits and period.
    Every line passes `redaction.ensure_redacted`, which refuses output that
-   contains a secret in base32, hex, base64 or raw form, or an `otpauth`
-   URI marker.
-3. **No secrets in argv.** URIs are read from a file or stdin. The CLI
-   refuses arguments that look like URIs, because arguments are visible in
-   shell history and to other local users through the process list.
-4. **No secrets in errors.** Error messages name a line number and a reason,
-   never the input text. Unexpected exceptions print only their type.
-   `TotpAccount.__repr__` omits the secret.
+   contains any secret seen in the input (including skipped accounts) in
+   base32, hex, base64 or raw form, ignoring case and separators, or an
+   `otpauth` URI marker. A skipped account whose name trips the check is
+   reported by position only.
+3. **No secrets in argv or on an echoing terminal.** URIs are read from a
+   file or a pipe. The CLI refuses arguments that look like URIs (shell
+   history, process list), hides argument values in usage errors, and
+   refuses to read from an interactive terminal (echo, scrollback).
+4. **No secrets in errors.** Error messages give positions (line, account)
+   and fixed reasons, never input text. Unexpected exceptions print only
+   their type. `TotpAccount` and `SkippedAccount` omit the secret from
+   `repr()`.
 5. **Careful files.** Export files are created with `O_EXCL | O_NOFOLLOW`
-   and mode `0600`. An existing file is never overwritten.
-6. **Strict parsing.** Unknown or repeated protobuf fields, wrong wire types,
-   unknown payload versions and incomplete multi-QR exports are errors.
+   and never overwrite an existing file. On Linux and macOS they get mode
+   `0600`. **On Windows the mode is ignored** and the file inherits its
+   folder's permissions.
+6. **No spoofed names.** Names and issuers with control, format (bidi
+   override, zero-width), separator or private-use characters are rejected.
+7. **Strict parsing.** Unknown or repeated protobuf fields, wrong wire types,
+   overlong varints, invalid percent escapes or UTF-8, unknown payload
+   versions and incomplete multi-QR exports are errors. Declared batch
+   sizes are never used to allocate memory.
    Unsupported but well-formed accounts (HOTP, MD5) are listed by name and
    block `export` unless `--skip-unsupported` is given.
 
