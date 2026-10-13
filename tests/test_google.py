@@ -5,22 +5,30 @@ import urllib.parse
 from tests.fixtures import SYNTHETIC_SECRET, ga_account, ga_payload, ga_uri
 from totp_migrator.errors import MigratorError
 from totp_migrator.google import (
+    MigrationBatch,
     check_batches_complete,
     parse_migration_payload,
     parse_migration_uri,
 )
+from totp_migrator.model import SkippedAccount, TotpAccount
 from totp_migrator.protobuf import encode_field
+
+
+def only_account(batch: MigrationBatch) -> TotpAccount:
+    (entry,) = batch.entries
+    assert isinstance(entry, TotpAccount)
+    return entry
 
 
 class PayloadTests(unittest.TestCase):
     def test_canonical_fixture(self) -> None:
         # Hand-assembled bytes, independent of the test encoder:
-        # account {secret=0x42, name="a", algorithm=SHA1, digits=6, type=TOTP},
+        # account {secret=0x42 * 10, name="a", algorithm=SHA1, digits=6, type=TOTP},
         # version=1, batch_size=1, batch_index=0, batch_id=7.
-        payload = bytes.fromhex("0a0c0a01421201612001280130021001180120002807")
+        payload = bytes.fromhex("0a150a0a" + "42" * 10 + "1201612001280130021001180120002807")
         batch = parse_migration_payload(payload)
-        account = batch.accounts[0]
-        self.assertEqual((account.secret, account.name, account.issuer), (b"\x42", "a", ""))
+        account = only_account(batch)
+        self.assertEqual((account.secret, account.name, account.issuer), (b"\x42" * 10, "a", ""))
         self.assertEqual((account.algorithm, account.digits, account.period), ("SHA1", 6, 30))
         self.assertEqual((batch.version, batch.batch_size, batch.batch_index), (1, 1, 0))
         self.assertEqual(batch.batch_id, 7)
@@ -30,22 +38,22 @@ class PayloadTests(unittest.TestCase):
         for code, digit_code, algorithm, digits in cases:
             with self.subTest(algorithm=algorithm):
                 payload = ga_payload(ga_account(algorithm=code, digits=digit_code))
-                account = parse_migration_payload(payload).accounts[0]
+                account = only_account(parse_migration_payload(payload))
                 self.assertEqual((account.algorithm, account.digits), (algorithm, digits))
 
     def test_issuer_prefix_is_removed_from_name(self) -> None:
         payload = ga_payload(ga_account(name=b"Example:alice@example.test"))
-        account = parse_migration_payload(payload).accounts[0]
+        account = only_account(parse_migration_payload(payload))
         self.assertEqual((account.issuer, account.name), ("Example", "alice@example.test"))
 
     def test_issuer_is_taken_from_name_when_missing(self) -> None:
         payload = ga_payload(ga_account(name=b"Legacy:bob", issuer=b""))
-        account = parse_migration_payload(payload).accounts[0]
+        account = only_account(parse_migration_payload(payload))
         self.assertEqual((account.issuer, account.name), ("Legacy", "bob"))
 
     def test_conflicting_prefix_keeps_the_whole_name(self) -> None:
         payload = ga_payload(ga_account(name=b"Other:bob"))
-        account = parse_migration_payload(payload).accounts[0]
+        account = only_account(parse_migration_payload(payload))
         self.assertEqual((account.issuer, account.name), ("Example", "Other:bob"))
 
     def test_fields_in_any_order_and_multibyte_varints(self) -> None:
@@ -58,19 +66,24 @@ class PayloadTests(unittest.TestCase):
             + encode_field(2, b"b")
         )
         batch = parse_migration_payload(ga_payload(account, batch_id=300))
-        self.assertEqual(batch.accounts[0].label, "XYZ:b")
+        self.assertEqual(only_account(batch).label, "XYZ:b")
         self.assertEqual(batch.batch_id, 300)
 
     def test_negative_batch_id_is_int32(self) -> None:
         batch = parse_migration_payload(ga_payload(ga_account(), batch_id=-5))
         self.assertEqual(batch.batch_id, -5)
 
+    def test_hotp_counter_of_any_int64_value_is_accepted(self) -> None:
+        payload = ga_payload(ga_account(otp_type=1, extra=encode_field(7, -1)))
+        (entry,) = parse_migration_payload(payload).entries
+        self.assertIsInstance(entry, SkippedAccount)
+
     def test_version_two_is_accepted(self) -> None:
         self.assertEqual(parse_migration_payload(ga_payload(ga_account(), version=2)).version, 2)
 
 
-class UnsupportedAccountTests(unittest.TestCase):
-    def test_hotp_md5_and_missing_enums_are_skipped_not_guessed(self) -> None:
+class SkippedAccountTests(unittest.TestCase):
+    def test_unsupported_values_are_skipped_not_guessed(self) -> None:
         cases = {
             "hotp": ga_account(otp_type=1),
             "missing type": ga_account(otp_type=0),
@@ -78,13 +91,22 @@ class UnsupportedAccountTests(unittest.TestCase):
             "missing algorithm": ga_account(algorithm=0),
             "missing digits": ga_account(digits=0),
             "unknown digits": ga_account(digits=3),
+            "short secret": ga_account(secret=b"\x01" * 9),
+            "empty secret": ga_account(secret=b""),
         }
         for case, account in cases.items():
             with self.subTest(case=case):
                 batch = parse_migration_payload(ga_payload(account, ga_account(name=b"ok")))
-                self.assertEqual([a.name for a in batch.accounts], ["ok"])
-                self.assertEqual(len(batch.skipped), 1)
-                self.assertEqual(batch.skipped[0].label, "Example:alice@example.test")
+                skipped, kept = batch.entries
+                self.assertIsInstance(skipped, SkippedAccount)
+                self.assertEqual(skipped.label, "Example:alice@example.test")
+                self.assertIsInstance(kept, TotpAccount)
+
+    def test_skipped_labels_are_validated_too(self) -> None:
+        payload = ga_payload(ga_account(name=b"evil\x1b[2Jname", otp_type=1))
+        with self.assertRaises(MigratorError) as caught:
+            parse_migration_payload(payload)
+        self.assertIn("account 1: account name contains control", str(caught.exception))
 
 
 class MalformedPayloadTests(unittest.TestCase):
@@ -100,14 +122,16 @@ class MalformedPayloadTests(unittest.TestCase):
                 parse_migration_payload(payload[:cut])
 
     def test_unknown_account_field(self) -> None:
-        self.assert_rejected(ga_payload(ga_account(extra=encode_field(15, 1))), "unknown field 15")
+        self.assert_rejected(
+            ga_payload(ga_account(extra=encode_field(15, 1))), "account 1: unknown field 15"
+        )
 
     def test_unknown_payload_field(self) -> None:
         self.assert_rejected(ga_payload(ga_account()) + encode_field(9, 1), "unknown field 9")
 
     def test_repeated_account_field(self) -> None:
         self.assert_rejected(
-            ga_payload(ga_account(extra=encode_field(2, b"again"))), "repeats field 2"
+            ga_payload(ga_account(extra=encode_field(2, b"again"))), "repeated field 2"
         )
 
     def test_wrong_wire_type(self) -> None:
@@ -116,16 +140,8 @@ class MalformedPayloadTests(unittest.TestCase):
     def test_fixed64_where_an_account_belongs(self) -> None:
         self.assert_rejected(bytes([0x09]) + bytes(8), "wrong wire type")
 
-    def test_empty_secret(self) -> None:
-        self.assert_rejected(ga_payload(ga_account(secret=b"")), "secret must be")
-
     def test_invalid_utf8_name(self) -> None:
         self.assert_rejected(ga_payload(ga_account(name=b"\xff\xfe")), "UTF-8")
-
-    def test_control_characters_in_name(self) -> None:
-        self.assert_rejected(
-            ga_payload(ga_account(name=b"evil\nname")), "control or invisible characters"
-        )
 
     def test_unsupported_version(self) -> None:
         self.assert_rejected(ga_payload(ga_account(), version=3), "version 3")
@@ -135,27 +151,33 @@ class MalformedPayloadTests(unittest.TestCase):
             ga_payload(ga_account(), batch_size=2, batch_index=2), "batch position"
         )
 
-    def test_overlong_varint(self) -> None:
+    def test_varint_longer_than_ten_bytes(self) -> None:
         self.assert_rejected(bytes([0x10]) + b"\xff" * 11, "varint is too long")
+
+    def test_varint_larger_than_64_bits(self) -> None:
+        # Ten bytes whose last one carries more than bit 63: 2**64 + 1.
+        overflowing = b"\x81" + b"\x80" * 8 + b"\x02"
+        self.assert_rejected(bytes([0x10]) + overflowing, "larger than 64 bits")
 
 
 class UriTests(unittest.TestCase):
     def test_standard_percent_encoded(self) -> None:
         batch = parse_migration_uri(ga_uri(ga_payload(ga_account())))
-        self.assertEqual(batch.accounts[0].secret, SYNTHETIC_SECRET)
+        self.assertEqual(only_account(batch).secret, SYNTHETIC_SECRET)
 
     def test_raw_plus_and_slash_are_not_spaces(self) -> None:
-        payload = ga_payload(ga_account(secret=bytes([0xFB, 0xEF, 0xFF] * 7)))
-        data = base64.b64encode(payload).decode("ascii")
+        secret = bytes([0xFB, 0xEF, 0xFF] * 7)
+        data = base64.b64encode(ga_payload(ga_account(secret=secret))).decode("ascii")
         self.assertTrue("+" in data or "/" in data)
         batch = parse_migration_uri("otpauth-migration://offline?data=" + data)
-        self.assertEqual(batch.accounts[0].secret, bytes([0xFB, 0xEF, 0xFF] * 7))
+        self.assertEqual(only_account(batch).secret, secret)
 
     def test_urlsafe_alphabet_without_padding(self) -> None:
-        payload = ga_payload(ga_account(secret=bytes([0xFB, 0xEF, 0xFF] * 7)))
+        secret = bytes([0xFB, 0xEF, 0xFF] * 7)
+        payload = ga_payload(ga_account(secret=secret))
         data = base64.urlsafe_b64encode(payload).decode("ascii").rstrip("=")
         batch = parse_migration_uri("otpauth-migration://offline?data=" + data)
-        self.assertEqual(len(batch.accounts), 1)
+        self.assertEqual(only_account(batch).secret, secret)
 
     def test_rejections(self) -> None:
         data = urllib.parse.quote(base64.b64encode(ga_payload(ga_account())).decode())
@@ -166,16 +188,16 @@ class UriTests(unittest.TestCase):
             f"otpauth-migration://offline?data={data}&data={data}": "exactly one data",
             "otpauth-migration://offline?data=a+b-c": "mixes base64",
             "otpauth-migration://offline?data=!!!!": "not valid base64",
+            "otpauth-migration://offline?data=%ZZ": "invalid percent escape",
         }
         for uri, message in cases.items():
-            with self.subTest(message=message):
-                with self.assertRaises(MigratorError) as caught:
-                    parse_migration_uri(uri)
-                self.assertIn(message, str(caught.exception))
+            with self.subTest(message=message), self.assertRaises(MigratorError) as caught:
+                parse_migration_uri(uri)
+            self.assertIn(message, str(caught.exception))
 
 
 class BatchTests(unittest.TestCase):
-    def batch(self, index: int, size: int = 3, batch_id: int = 9):
+    def batch(self, index: int, size: int = 3, batch_id: int = 9) -> MigrationBatch:
         payload = ga_payload(
             ga_account(name=f"user{index}".encode()),
             batch_size=size,
@@ -199,6 +221,10 @@ class BatchTests(unittest.TestCase):
     def test_size_disagreement(self) -> None:
         with self.assertRaises(MigratorError):
             check_batches_complete([self.batch(0, size=2), self.batch(1, size=3)])
+
+    def test_huge_declared_size_fails_without_allocating(self) -> None:
+        with self.assertRaises(MigratorError):
+            check_batches_complete([self.batch(0, size=2**31 - 1)])
 
     def test_separate_exports_are_checked_separately(self) -> None:
         check_batches_complete(

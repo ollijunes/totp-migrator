@@ -1,4 +1,7 @@
-"""Exporters: pure functions from accounts to the text of an import file.
+"""Exporters: functions from accounts to the text of an import file.
+
+They have no side effects. Only the Aegis exporter is not deterministic:
+it draws fresh entry UUIDs unless a generator is passed in.
 
 Every output here contains secrets. Writing it anywhere is the CLI's job.
 """
@@ -13,9 +16,6 @@ from .model import TotpAccount
 from .otpauth import build_otpauth_uri
 
 Exporter = Callable[[Sequence[TotpAccount]], str]
-
-# Fixed namespace so Aegis entry UUIDs are stable across runs.
-_AEGIS_NAMESPACE = uuid.UUID("5b0f6e3c-7a51-4b8e-9d0a-2f3c1e4d6a70")
 
 
 def export_otpauth(accounts: Sequence[TotpAccount]) -> str:
@@ -45,12 +45,19 @@ def export_json(accounts: Sequence[TotpAccount]) -> str:
     return _dump(document)
 
 
-def export_aegis(accounts: Sequence[TotpAccount]) -> str:
-    """An unencrypted Aegis vault (Import > Aegis, plain JSON)."""
+def export_aegis(
+    accounts: Sequence[TotpAccount],
+    new_uuid: Callable[[], uuid.UUID] = uuid.uuid4,
+) -> str:
+    """An unencrypted Aegis vault (Import > Aegis, plain JSON).
+
+    Every entry gets a fresh random UUID, as Aegis does for new entries, so
+    an import never collides with an entry that is already in the vault.
+    """
     entries = [
         {
             "type": "totp",
-            "uuid": str(uuid.uuid5(_AEGIS_NAMESPACE, f"{index}:{account.label}")),
+            "uuid": str(new_uuid()),
             "name": account.name,
             "issuer": account.issuer,
             "note": "",
@@ -63,7 +70,7 @@ def export_aegis(accounts: Sequence[TotpAccount]) -> str:
                 "period": account.period,
             },
         }
-        for index, account in enumerate(accounts)
+        for account in accounts
     ]
     document = {
         "version": 1,

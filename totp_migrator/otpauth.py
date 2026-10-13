@@ -9,8 +9,16 @@ import base64
 import binascii
 import urllib.parse
 
-from .errors import MigratorError, UnsupportedAccount
-from .model import ALGORITHMS, DEFAULT_PERIOD, DIGITS, TotpAccount, split_label
+from .errors import MigratorError
+from .model import (
+    ALGORITHMS,
+    DEFAULT_PERIOD,
+    SkippedAccount,
+    TotpAccount,
+    make_account,
+    split_label,
+)
+from .urltext import parse_query, strict_unquote
 
 SCHEME = "otpauth"
 MAX_URI_LENGTH = 4096
@@ -20,34 +28,33 @@ def is_otpauth_uri(text: str) -> bool:
     return text.lower().startswith(SCHEME + "://")
 
 
-def parse_otpauth_uri(uri: str) -> TotpAccount:
+def parse_otpauth_uri(uri: str) -> TotpAccount | SkippedAccount:
     if len(uri) > MAX_URI_LENGTH:
         raise MigratorError("otpauth URI is too long")
-    parts = urllib.parse.urlsplit(uri)
+    try:
+        parts = urllib.parse.urlsplit(uri)
+    except ValueError:
+        raise MigratorError("otpauth URI is malformed") from None
     if parts.scheme.lower() != SCHEME:
         raise MigratorError("not an otpauth:// URI")
-    params = _query_params(parts.query)
+    params = parse_query(parts.query)
     issuer, name = split_label(
-        urllib.parse.unquote(parts.path.removeprefix("/")),
+        strict_unquote(parts.path.removeprefix("/"), plus_is_space=False),
         params.get("issuer", ""),
     )
-    label = f"{issuer}:{name}" if issuer else name
+    secret = _decode_base32(params.get("secret", ""))
 
-    otp_type = parts.netloc.lower()
-    if otp_type != "totp":
-        raise UnsupportedAccount(label, f"only TOTP is supported (this is {otp_type or 'unknown'})")
+    if parts.netloc.lower() != "totp":
+        return SkippedAccount(name, issuer, "only TOTP accounts are supported", secret)
     algorithm = params.get("algorithm", "SHA1").upper()
     if algorithm not in ALGORITHMS:
-        raise UnsupportedAccount(label, "unsupported hash algorithm")
-    digits = _positive_int(params, "digits", 6)
-    if digits not in DIGITS:
-        raise UnsupportedAccount(label, f"{digits}-digit codes are not supported")
-    return TotpAccount(
-        name=name,
-        issuer=issuer,
-        secret=_decode_base32(params.get("secret", "")),
+        return SkippedAccount(name, issuer, "unsupported hash algorithm", secret)
+    return make_account(
+        name,
+        issuer,
+        secret,
         algorithm=algorithm,
-        digits=digits,
+        digits=_positive_int(params, "digits", 6),
         period=_positive_int(params, "period", DEFAULT_PERIOD),
     )
 
@@ -70,16 +77,6 @@ def build_otpauth_uri(account: TotpAccount) -> str:
     return f"otpauth://totp/{label}?{query}"
 
 
-def _query_params(query: str) -> dict[str, str]:
-    params: dict[str, str] = {}
-    for key, value in urllib.parse.parse_qsl(query, keep_blank_values=True):
-        key = key.lower()
-        if key in params:
-            raise MigratorError(f"otpauth URI repeats the '{key}' parameter")
-        params[key] = value
-    return params
-
-
 def _decode_base32(text: str) -> bytes:
     cleaned = text.replace(" ", "").replace("-", "").upper().rstrip("=")
     if not cleaned:
@@ -94,6 +91,6 @@ def _positive_int(params: dict[str, str], key: str, default: int) -> int:
     raw = params.get(key)
     if raw is None:
         return default
-    if not (raw.isascii() and raw.isdigit()):
+    if not (raw.isascii() and raw.isdigit()) or len(raw) > 9:
         raise MigratorError(f"otpauth '{key}' must be a positive integer")
     return int(raw)

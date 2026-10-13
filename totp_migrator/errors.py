@@ -1,14 +1,17 @@
-"""Error types. Messages never contain secrets, URIs, or one-time codes."""
+"""Error types.
+
+Messages are fixed descriptions plus positions (line and account numbers).
+They never contain input text: no labels, secrets, URIs or parameter names.
+"""
 
 
 class MigratorError(Exception):
     """An expected failure that is safe to show to the user."""
 
 
-class UnsupportedAccount(MigratorError):
-    """A well-formed account that this tool deliberately does not migrate."""
+class UnsupportedValue(MigratorError):
+    """A well-formed value this tool deliberately does not migrate.
 
-    def __init__(self, label: str, reason: str) -> None:
-        self.label = label
-        self.reason = reason
-        super().__init__(f"{label}: {reason}")
+    Parsers turn it into a SkippedAccount so that ``--skip-unsupported`` can
+    leave the account out instead of stopping the whole run.
+    """

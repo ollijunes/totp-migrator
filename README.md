@@ -35,6 +35,7 @@ Decode the QR codes on your own machine. For example, with
 [zbar](https://github.com/mchehab/zbar) and a photo or screenshot of each code:
 
 ```sh
+umask 077   # files created from here on are readable only by you
 zbarimg --raw -q qr-1.png qr-2.png > accounts.txt
 ```
 
@@ -59,15 +60,24 @@ skipped Legacy:bob: only TOTP accounts are supported (this is HOTP or unknown)
 Secrets are hidden. Add --reveal to show them.
 ```
 
-Without a file argument, the tool reads stdin. When stdin is a terminal,
-you can paste the URIs and press Ctrl-D, which keeps them out of your shell
-history. URIs given as command-line arguments are refused for the same
-reason.
+Without a file argument, the tool reads a pipe, for example straight from
+the clipboard:
+
+```sh
+pbpaste | totp-migrator decode            # macOS
+wl-paste | totp-migrator decode           # Linux, Wayland
+```
+
+It refuses to read from an interactive terminal, because pasted URIs would
+be echoed on screen and stay in the scrollback. It also refuses URIs as
+command-line arguments, which end up in shell history.
 
 ## 3. Export
 
-`export` writes a new file with mode `0600` and never overwrites an existing
-one. It refuses to write secrets to the terminal unless you add `--reveal`.
+`export` writes a new file and never overwrites an existing one. On Linux
+and macOS the file is readable only by you (mode `0600`); on Windows it
+gets the permissions of its folder, so write it inside your user profile.
+`export` refuses to write secrets to the terminal unless you add `--reveal`.
 
 ### 1Password
 
@@ -137,12 +147,18 @@ digits, period and URI for each account, for your own scripts.
 | `otpauth-migration://offline?data=...` | Google Authenticator export, versions 1 and 2, single or multi-QR. All QR codes of a multi-QR export must be present. |
 | `otpauth://totp/...` | [Key Uri Format](https://github.com/google/google-authenticator/wiki/Key-Uri-Format): SHA1/SHA256/SHA512, 6-8 digits, any period up to an hour. |
 
-HOTP (counter-based) accounts, MD5, and other unusual parameters are
-reported as unsupported. `export` stops when it finds one. Pass
+Secrets must be 10-256 bytes (80 bits or more). HOTP (counter-based) accounts, MD5, shorter secrets
+and other unusual parameters are reported as unsupported, with the
+account's position and name. `export` stops when it finds one. Pass
 `--skip-unsupported` to export the rest and move those accounts by hand.
 
 Google Authenticator's export carries no period, so those accounts get
 30 seconds, which is what the app itself uses.
+
+The output formats follow each app's own unencrypted export format. The
+tests check their structure, not an import into every app version, so
+compare a few codes after importing, and please open an issue if an app
+rejects a file.
 
 The Google export format has no published schema. The field numbers here
 match two independent reverse-engineered descriptions: Aegis's
@@ -155,13 +171,17 @@ Read [SECURITY.md](SECURITY.md) for the full list. In short:
 - No network access. A test fails if any module imports a networking
   library, and the CLI tests run with sockets disabled.
 - Without `--reveal`, every line the tool prints first passes a check that
-  refuses output containing any secret in base32, hex, base64 or raw form,
-  or any `otpauth` URI. A bug that pulled a secret into a message would fail
-  instead of printing it.
-- Error messages name the line number, never the line content.
+  refuses output containing any secret in base32, hex, base64 or raw form
+  (ignoring case, spaces, hyphens and escapes), or any `otpauth` URI. A bug
+  that pulled a secret into a message would fail instead of printing it.
+- Error messages give the line and account number and a fixed reason,
+  never input text. Mistyped argument values are hidden too.
+- Account names with control, bidi-override or zero-width characters are
+  rejected, so a crafted QR code can't disguise one account as another.
 - Account objects hide the secret from `repr()`, so it cannot appear in a
   traceback or log line. Unexpected exceptions print only their type.
-- Export files are created with `O_EXCL` and mode `0600`.
+- Export files are created with `O_EXCL`, and with mode `0600` on Linux
+  and macOS.
 
 What the tool cannot protect: the export files themselves, the QR images,
 your terminal scrollback after `--reveal`, and the apps you import into.

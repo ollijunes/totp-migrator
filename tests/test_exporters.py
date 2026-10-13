@@ -21,10 +21,21 @@ ACCOUNTS = (
 
 
 class ExporterTests(unittest.TestCase):
-    def test_every_format_is_pure_and_deterministic(self) -> None:
+    def test_every_format_except_aegis_is_deterministic(self) -> None:
         for name, exporter in EXPORTERS.items():
-            with self.subTest(format=name):
-                self.assertEqual(exporter(ACCOUNTS), exporter(list(ACCOUNTS)))
+            if name != "aegis":
+                with self.subTest(format=name):
+                    self.assertEqual(exporter(ACCOUNTS), exporter(list(ACCOUNTS)))
+
+    def test_aegis_uuids_are_fresh_and_injectable(self) -> None:
+        first, second = (
+            [entry["uuid"] for entry in json.loads(export_aegis(ACCOUNTS))["db"]["entries"]]
+            for _ in range(2)
+        )
+        self.assertTrue(set(first).isdisjoint(second))
+        fixed = uuid.UUID(int=1)
+        entries = json.loads(export_aegis(ACCOUNTS, new_uuid=lambda: fixed))["db"]["entries"]
+        self.assertEqual({entry["uuid"] for entry in entries}, {str(fixed)})
 
     def test_every_format_handles_no_accounts(self) -> None:
         for name, exporter in EXPORTERS.items():
@@ -59,11 +70,6 @@ class ExporterTests(unittest.TestCase):
         )
         uuids = {uuid.UUID(entry["uuid"]) for entry in entries}
         self.assertEqual(len(uuids), 2)
-
-    def test_aegis_uuids_differ_for_same_label(self) -> None:
-        twins = (ACCOUNTS[0], TotpAccount("alice@example.test", "Example", b"other-secret"))
-        entries = json.loads(export_aegis(twins))["db"]["entries"]
-        self.assertNotEqual(entries[0]["uuid"], entries[1]["uuid"])
 
     def test_bitwarden_unencrypted_json(self) -> None:
         document = json.loads(export_bitwarden(ACCOUNTS))
