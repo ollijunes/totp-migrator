@@ -200,9 +200,18 @@ class ExportTests(RedactionTestCase):
             self.assertFalse(path.exists())
 
     def test_failed_write_leaves_no_partial_file(self) -> None:
+        # The file is created, then the write fails (as on a full disk). The
+        # handle must be closed before the unlink, or Windows keeps the file.
+        real_fdopen = os.fdopen
+
+        def fdopen_with_failing_write(*args, **kwargs):
+            handle = real_fdopen(*args, **kwargs)
+            handle.write = mock.Mock(side_effect=OSError(28, "No space left on device"))
+            return handle
+
         with (
             tempfile.TemporaryDirectory() as directory,
-            mock.patch("os.fdopen", side_effect=OSError(28, "No space left on device")),
+            mock.patch("os.fdopen", side_effect=fdopen_with_failing_write),
         ):
             path = Path(directory, "out.json")
             result = run("export", "-f", "json", "-o", str(path), "--skip-unsupported")
