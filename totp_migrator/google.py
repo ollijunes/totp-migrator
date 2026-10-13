@@ -133,7 +133,10 @@ def check_batches_complete(batches: list[MigrationBatch]) -> None:
     """
     groups: dict[int, list[MigrationBatch]] = defaultdict(list)
     for batch in batches:
-        groups[batch.batch_id].append(batch)
+        # A single-QR export is complete on its own. Grouping it would make two
+        # unrelated exports that both omitted the id (0) look like a repeat.
+        if batch.batch_size > 1:
+            groups[batch.batch_id].append(batch)
     for batch_id, group in groups.items():
         sizes = {batch.batch_size for batch in group}
         if len(sizes) != 1:
