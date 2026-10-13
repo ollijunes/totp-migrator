@@ -48,6 +48,12 @@ class ParseTests(unittest.TestCase):
             with self.subTest(uri=uri.split("?")[0]), self.assertRaises(UnsupportedAccount):
                 parse_otpauth_uri(uri)
 
+    def test_display_spoofing_characters_are_rejected(self) -> None:
+        for label in ("a%1B%5B31mX", "a%C2%9BX", "safe%E2%80%AEgpj", "a%E2%80%A8b", "a%E2%80%8Bb"):
+            with self.subTest(label=label), self.assertRaises(MigratorError) as caught:
+                parse_otpauth_uri(f"otpauth://totp/{label}?secret={RFC_SHA1_BASE32}")
+            self.assertIn("control or invisible characters", str(caught.exception))
+
     def test_malformed(self) -> None:
         cases = {
             "otpauth://totp/x": "no secret",

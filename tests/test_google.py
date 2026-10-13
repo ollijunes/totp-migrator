@@ -123,7 +123,9 @@ class MalformedPayloadTests(unittest.TestCase):
         self.assert_rejected(ga_payload(ga_account(name=b"\xff\xfe")), "UTF-8")
 
     def test_control_characters_in_name(self) -> None:
-        self.assert_rejected(ga_payload(ga_account(name=b"evil\nname")), "control characters")
+        self.assert_rejected(
+            ga_payload(ga_account(name=b"evil\nname")), "control or invisible characters"
+        )
 
     def test_unsupported_version(self) -> None:
         self.assert_rejected(ga_payload(ga_account(), version=3), "version 3")
