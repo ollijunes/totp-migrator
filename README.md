@@ -6,7 +6,8 @@ without sending them anywhere.
 
 - **Offline.** No network code. The tool reads a file or a pipe and writes a file.
 - **Secrets hidden by default.** Output shows issuer, account name and
-  parameters. Secrets, URIs and current codes appear only with `--reveal`.
+  parameters. Secrets and current codes appear only with `--reveal`
+  (`decode --json --reveal` also includes the full URI).
 - **Strict.** An unknown protobuf field, a missing QR code from a multi-QR
   export, or a malformed URI stops the run instead of being guessed at.
 - **No dependencies.** Python 3.10+ standard library only.
@@ -91,8 +92,9 @@ done < items.jsonl
 
 Each line is a 1Password item template (a Login with a one-time password
 field). The 1Password CLI reads the template from stdin, so the secret never
-appears in a process argument. Add `--dry-run` to the `op` command to preview
-first.
+appears in a process argument. `op item create --dry-run` previews the item
+instead of creating it, but the preview prints every field, including the
+one-time password URI, on your terminal.
 
 ### Bitwarden and Vaultwarden
 
@@ -147,11 +149,11 @@ digits, period and URI for each account, for your own scripts.
 | `otpauth-migration://offline?data=...` | Google Authenticator export, versions 1 and 2, single or multi-QR. All QR codes of a multi-QR export must be present. |
 | `otpauth://totp/...` | [Key Uri Format](https://github.com/google/google-authenticator/wiki/Key-Uri-Format): SHA1/SHA256/SHA512, 6-8 digits, any period up to an hour. |
 
-Secrets must be 10-256 bytes (80 bits or more). HOTP (counter-based)
-accounts, MD5, shorter secrets, missing names and other unusual values are
-reported as unsupported, with the account's position and name. `export`
+HOTP (counter-based) accounts, MD5, missing names and other unusual values
+are reported as unsupported, with the account's position and name. `export`
 stops when it finds one. Pass `--skip-unsupported` to export the rest and
-move those accounts by hand.
+move those accounts by hand. Secrets shorter than 8 bytes (64 bits) or
+longer than 256 are rejected as malformed.
 
 Google Authenticator's export carries no period, so those accounts get
 30 seconds, which is what the app itself uses.
@@ -176,7 +178,8 @@ Read [SECURITY.md](SECURITY.md) for the full list. In short:
   (ignoring case, spaces, hyphens and escapes), or any `otpauth` URI. A bug
   that pulled a secret into a message would fail instead of printing it.
 - Error messages give the line and account number and a fixed reason,
-  never input text. Mistyped argument values are hidden too.
+  never input text. Usage errors show the usage line, not the mistyped
+  value, and the output path is never printed back.
 - Account names with control, bidi-override or zero-width characters are
   rejected, so a crafted QR code can't disguise one account as another.
 - Account objects hide the secret from `repr()`, so it cannot appear in a
