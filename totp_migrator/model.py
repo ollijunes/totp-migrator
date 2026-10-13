@@ -15,6 +15,11 @@ MAX_PERIOD = 3600
 MAX_SECRET_BYTES = 256
 MAX_TEXT_LENGTH = 256
 
+# Control, format (bidi overrides, zero-width), line/paragraph separators,
+# private-use and surrogate characters. They can rewrite what a terminal
+# shows, so a crafted QR code could make one account look like another.
+_FORBIDDEN_CATEGORIES = frozenset({"Cc", "Cf", "Zl", "Zp", "Co", "Cs"})
+
 
 @dataclass(frozen=True)
 class TotpAccount:
@@ -85,5 +90,5 @@ def _check_text(what: str, value: str, *, required: bool) -> None:
         raise MigratorError(f"account {what} is empty")
     if len(value) > MAX_TEXT_LENGTH:
         raise MigratorError(f"account {what} is longer than {MAX_TEXT_LENGTH} characters")
-    if any(unicodedata.category(char) == "Cc" for char in value):
-        raise MigratorError(f"account {what} contains control characters")
+    if any(unicodedata.category(char) in _FORBIDDEN_CATEGORIES for char in value):
+        raise MigratorError(f"account {what} contains control or invisible characters")
