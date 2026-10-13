@@ -43,7 +43,8 @@ jobs:
   import-vaultwarden:
     runs-on: ubuntu-latest
     env:
-      VAULTWARDEN_IMAGE: "vaultwarden/server:1.37.4"
+      # 1.37.4, pinned to the image index digest so a re-pushed tag cannot change the test.
+      VAULTWARDEN_IMAGE: "vaultwarden/server:1.37.4@sha256:efb3cde962015fcc036b2ea625242248611943b27212ebf4392841fb30fad055"
       BITWARDEN_CLI_VERSION: "2026.9.1"
     steps:
       - uses: actions/checkout@v4

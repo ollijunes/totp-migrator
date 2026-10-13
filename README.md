@@ -147,8 +147,9 @@ in Aegis's `docs/vault.md`.
 totp-migrator export -f lastpass -o lastpass.csv accounts.txt
 ```
 
-In LastPass, open **Advanced Options → Import**, choose **Generic CSV file**
-and select `lastpass.csv`. Each account becomes a password item with the
+Import it as a *generic CSV file* from the LastPass vault's import page
+(LastPass's [generic CSV help article](https://community.lastpass.com/kb/articles/56-import-data-into-lastpass-using-a-generic-csv-file%EF%BB%BF)
+has the current menu path). Each account becomes a password item with the
 TOTP secret key in its `totp` field.
 
 LastPass stores only the bare secret key, so it always generates SHA1,
@@ -316,6 +317,16 @@ The tool writes a file; your vault's own importer reads it.
 ```sh
 python3 -m unittest            # standard library only
 python3 docs/render_demo.py    # regenerate docs/demo.svg from a real run
+```
+
+The Vaultwarden import test needs Docker, Node and the `cryptography`
+package; CI runs it on every push. Locally:
+
+```sh
+integration/start_vaultwarden.sh /tmp/vw 8443
+NODE_EXTRA_CA_CERTS=/tmp/vw/ssl/cert.pem python3 integration/vaultwarden_import.py \
+  --server https://127.0.0.1:8443 --bw "npx -y @bitwarden/cli@2026.9.1"
+docker stop totp-migrator-vaultwarden
 ```
 
 Tests use only synthetic secrets and the published RFC 4226 and RFC 6238
