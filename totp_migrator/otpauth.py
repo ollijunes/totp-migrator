@@ -64,16 +64,16 @@ def build_otpauth_uri(account: TotpAccount) -> str:
     label = urllib.parse.quote(account.name, safe="@")
     if account.issuer:
         label = urllib.parse.quote(account.issuer, safe="") + ":" + label
-    query = urllib.parse.urlencode(
-        {
-            "secret": account.secret_base32,
-            "issuer": account.issuer,
-            "algorithm": account.algorithm,
-            "digits": account.digits,
-            "period": account.period,
-        },
-        quote_via=urllib.parse.quote,
-    )
+    params = {
+        "secret": account.secret_base32,
+        "issuer": account.issuer,
+        "algorithm": account.algorithm,
+        "digits": account.digits,
+        "period": account.period,
+    }
+    if not account.issuer:
+        del params["issuer"]
+    query = urllib.parse.urlencode(params, quote_via=urllib.parse.quote)
     return f"otpauth://totp/{label}?{query}"
 
 

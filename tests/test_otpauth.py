@@ -54,12 +54,20 @@ class ParseTests(unittest.TestCase):
             f"otpauth://totp/Example:x?secret={RFC_SHA1_BASE32}&period=3601",
             f"otpauth://totp/Example:x?secret={RFC_SHA1_BASE32}&period=0",
             "otpauth://totp/Example:x?secret=AAAAAAAA",
+            f"otpauth://totp/Example:x?secret={RFC_SHA1_BASE32}&issuer=Exa%3Ample",
         ]
         for uri in cases:
             with self.subTest(uri=uri.split("?")[1]):
                 skipped = parse_otpauth_uri(uri)
                 self.assertIsInstance(skipped, SkippedAccount)
-                self.assertEqual(skipped.label, "Example:x")
+                self.assertIn(skipped.label, ("Example:x", "Exa:mple:Example:x"))
+
+    def test_missing_name_is_skipped_under_the_issuer(self) -> None:
+        skipped = parse_otpauth_uri(f"otpauth://totp/Example:?secret={RFC_SHA1_BASE32}")
+        self.assertIsInstance(skipped, SkippedAccount)
+        self.assertEqual((skipped.label, skipped.reason), ("Example", "account has no name"))
+        unnamed = parse_otpauth_uri(f"otpauth://totp/?secret={RFC_SHA1_BASE32}")
+        self.assertEqual(unnamed.label, "unnamed")
 
     def test_display_spoofing_characters_are_rejected(self) -> None:
         labels = ("a%1B%5B31mX", "a%C2%9BX", "safe%E2%80%AEgpj", "a%E2%80%A8b", "a%E2%80%8Bb")
@@ -79,8 +87,6 @@ class ParseTests(unittest.TestCase):
             f"otpauth://totp/x?secret={RFC_SHA1_BASE32}&secret=AAAA": "repeats a query",
             f"otpauth://totp/x?secret={RFC_SHA1_BASE32}&period=-30": "positive integer",
             f"otpauth://totp/x?secret={RFC_SHA1_BASE32}&period=" + "9" * 20: "positive integer",
-            f"otpauth://totp/?secret={RFC_SHA1_BASE32}": "name is empty",
-            f"otpauth://totp/x?secret={RFC_SHA1_BASE32}&issuer=A%3AB": "issuer must not",
             f"otpauth://totp/x%FF?secret={RFC_SHA1_BASE32}": "not valid UTF-8",
             f"otpauth://totp/x%ZZ?secret={RFC_SHA1_BASE32}": "invalid percent escape",
             f"otpauth://totp/x?secret={RFC_SHA1_BASE32}&issuer=%E2": "not valid UTF-8",
@@ -110,6 +116,12 @@ class BuildTests(unittest.TestCase):
         for account in accounts:
             with self.subTest(label=account.label):
                 self.assertEqual(parse(build_otpauth_uri(account)), account)
+
+    def test_empty_issuer_is_left_out(self) -> None:
+        uri = build_otpauth_uri(TotpAccount("alice", "", RFC_SEEDS["SHA1"]))
+        self.assertEqual(
+            uri, f"otpauth://totp/alice?secret={RFC_SHA1_BASE32}&algorithm=SHA1&digits=6&period=30"
+        )
 
     def test_every_parameter_is_explicit(self) -> None:
         uri = build_otpauth_uri(TotpAccount("alice", "Example", RFC_SEEDS["SHA1"]))

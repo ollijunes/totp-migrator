@@ -4,7 +4,7 @@ Move your two-factor (TOTP) accounts out of Google Authenticator, or out of
 any `otpauth://` URIs, into 1Password, Bitwarden/Vaultwarden, or Aegis,
 without sending them anywhere.
 
-- **Offline.** No network code. The tool reads a file or stdin and writes a file.
+- **Offline.** No network code. The tool reads a file or a pipe and writes a file.
 - **Secrets hidden by default.** Output shows issuer, account name and
   parameters. Secrets, URIs and current codes appear only with `--reveal`.
 - **Strict.** An unknown protobuf field, a missing QR code from a multi-QR
@@ -56,7 +56,7 @@ ISSUER   NAME                ALGORITHM  DIGITS  PERIOD
 Example  alice@example.test  SHA1       6       30
 GitLab   alice               SHA1       6       30
 2 account(s) from 2 Google Authenticator QR code(s).
-skipped Legacy:bob: only TOTP accounts are supported (this is HOTP or unknown)
+skipped line 2, account 1 (Legacy:bob): only TOTP accounts are supported
 Secrets are hidden. Add --reveal to show them.
 ```
 
@@ -147,10 +147,11 @@ digits, period and URI for each account, for your own scripts.
 | `otpauth-migration://offline?data=...` | Google Authenticator export, versions 1 and 2, single or multi-QR. All QR codes of a multi-QR export must be present. |
 | `otpauth://totp/...` | [Key Uri Format](https://github.com/google/google-authenticator/wiki/Key-Uri-Format): SHA1/SHA256/SHA512, 6-8 digits, any period up to an hour. |
 
-Secrets must be 10-256 bytes (80 bits or more). HOTP (counter-based) accounts, MD5, shorter secrets
-and other unusual parameters are reported as unsupported, with the
-account's position and name. `export` stops when it finds one. Pass
-`--skip-unsupported` to export the rest and move those accounts by hand.
+Secrets must be 10-256 bytes (80 bits or more). HOTP (counter-based)
+accounts, MD5, shorter secrets, missing names and other unusual values are
+reported as unsupported, with the account's position and name. `export`
+stops when it finds one. Pass `--skip-unsupported` to export the rest and
+move those accounts by hand.
 
 Google Authenticator's export carries no period, so those accounts get
 30 seconds, which is what the app itself uses.
