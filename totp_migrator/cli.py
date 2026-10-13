@@ -22,14 +22,15 @@ import os
 import sys
 import time
 from collections.abc import Sequence
+from dataclasses import replace
 from typing import NoReturn
 
 from . import __version__
 from .errors import MigratorError
-from .exporters import EXPORTERS
-from .model import TotpAccount
+from .exporters import EXPORTERS, LIMITS
+from .model import SkippedAccount, TotpAccount
 from .otpauth import build_otpauth_uri
-from .reader import ReadResult, read_accounts
+from .reader import ReadResult, SkippedEntry, read_accounts
 from .redaction import Redactor
 from .totp import current_code
 
@@ -87,7 +88,7 @@ def _build_parser() -> argparse.ArgumentParser:
         prog="totp-migrator",
         description=(
             "Move TOTP accounts out of Google Authenticator or otpauth:// URIs "
-            "into 1Password, Bitwarden/Vaultwarden, Aegis, or plain URIs. "
+            "into 1Password, Bitwarden/Vaultwarden, Aegis, LastPass, or plain URIs. "
             "Offline only. Secrets stay hidden unless you pass --reveal."
         ),
     )
@@ -158,7 +159,7 @@ def _run_export(args: argparse.Namespace) -> int:
             "refusing to write secrets to the terminal: use --output FILE, "
             "or add --reveal to write to stdout"
         )
-    result = _read(args.input)
+    result = _apply_format_limit(_read(args.input), args.format)
     redactor = Redactor(result.secrets)
     notes = _notes(result, redactor, reveal=args.reveal)
     if result.skipped and not args.skip_unsupported:
@@ -207,6 +208,23 @@ def _read(source: str) -> ReadResult:
     except UnicodeDecodeError:
         raise MigratorError("input is not valid UTF-8") from None
     return read_accounts(text)
+
+
+def _apply_format_limit(result: ReadResult, export_format: str) -> ReadResult:
+    """Move accounts the target format cannot hold into the skipped list."""
+    limit = LIMITS.get(export_format)
+    if limit is None:
+        return result
+    kept: list[TotpAccount] = []
+    skipped = list(result.skipped)
+    for account in result.accounts:
+        reason = limit(account)
+        if reason is None:
+            kept.append(account)
+        else:
+            refused = SkippedAccount(account.name, account.issuer, reason, account.secret)
+            skipped.append(SkippedEntry(f"for {export_format}", refused))
+    return replace(result, accounts=tuple(kept), skipped=tuple(skipped))
 
 
 def _create_private_file(path: str, content: str) -> None:

@@ -8,14 +8,18 @@ Every output here contains secrets. Writing it anywhere is the CLI's job.
 
 from __future__ import annotations
 
+import csv
+import io
 import json
 import uuid
 from collections.abc import Callable, Sequence
 
-from .model import TotpAccount
+from .model import DEFAULT_PERIOD, TotpAccount
 from .otpauth import build_otpauth_uri
 
 Exporter = Callable[[Sequence[TotpAccount]], str]
+# Returns why a format cannot hold an account, or None if it can.
+Limit = Callable[[TotpAccount], str | None]
 
 
 def export_otpauth(accounts: Sequence[TotpAccount]) -> str:
@@ -142,13 +146,41 @@ def export_1password(accounts: Sequence[TotpAccount]) -> str:
     return "".join(lines)
 
 
+LASTPASS_COLUMNS = ("url", "username", "password", "totp", "extra", "name", "grouping", "fav")
+
+
+def export_lastpass(accounts: Sequence[TotpAccount]) -> str:
+    """LastPass generic CSV, with the TOTP secret key in the ``totp`` column.
+
+    LastPass takes the bare base32 secret key, not an otpauth:// URI, so the
+    algorithm, digits and period cannot be carried. ``lastpass_limit`` keeps
+    out every account that does not use the defaults.
+    """
+    buffer = io.StringIO()
+    writer = csv.writer(buffer, lineterminator="\n")
+    writer.writerow(LASTPASS_COLUMNS)
+    for account in accounts:
+        writer.writerow(["", account.name, "", account.secret_base32, "", account.title, "", "0"])
+    return buffer.getvalue()
+
+
+def lastpass_limit(account: TotpAccount) -> str | None:
+    if (account.algorithm, account.digits, account.period) != ("SHA1", 6, DEFAULT_PERIOD):
+        return "LastPass stores only SHA1, 6-digit, 30-second codes"
+    return None
+
+
 EXPORTERS: dict[str, Exporter] = {
     "1password": export_1password,
     "bitwarden": export_bitwarden,
     "aegis": export_aegis,
+    "lastpass": export_lastpass,
     "otpauth": export_otpauth,
     "json": export_json,
 }
+
+# Formats that cannot represent every valid account.
+LIMITS: dict[str, Limit] = {"lastpass": lastpass_limit}
 
 
 def _dump(document: object) -> str:

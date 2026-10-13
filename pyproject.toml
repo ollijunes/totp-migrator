@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "totp-migrator"
-description = "Local-first TOTP migrator: Google Authenticator and otpauth:// to 1Password, Bitwarden/Vaultwarden, and Aegis."
+description = "Local-first TOTP migrator: Google Authenticator and otpauth:// to 1Password, Bitwarden/Vaultwarden, Aegis and LastPass."
 readme = "README.md"
 license = "MIT"
 license-files = ["LICENSE"]
@@ -12,7 +12,7 @@ authors = [{ name = "Olli Junes" }]
 requires-python = ">=3.10"
 dependencies = []
 dynamic = ["version"]
-keywords = ["totp", "2fa", "google-authenticator", "vaultwarden", "bitwarden", "aegis", "1password", "self-hosted"]
+keywords = ["totp", "2fa", "google-authenticator", "vaultwarden", "bitwarden", "aegis", "1password", "lastpass", "self-hosted"]
 classifiers = [
   "Environment :: Console",
   "Programming Language :: Python :: 3",
