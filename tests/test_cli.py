@@ -89,7 +89,7 @@ class DecodeTests(RedactionTestCase):
         self.assertIn("Other", result.stdout)
         self.assertIn("SHA256", result.stdout)
         self.assertIn("2 account(s) from 1 Google Authenticator QR code(s)", result.stderr)
-        self.assertIn("1 duplicate(s) removed", result.stderr)
+        self.assertIn("1 repeated line(s) read once", result.stderr)
         self.assertIn(
             "skipped line 3, account 2 (Example:hotp-user): only TOTP accounts are supported",
             result.stderr,
@@ -115,6 +115,18 @@ class DecodeTests(RedactionTestCase):
         self.assertEqual(parse_otpauth_uri(rows[1]["uri"]).secret, SECOND_SECRET)
         self.assertRegex(rows[0]["code"], r"^\d{6}$")
         self.assertNotIn("secret=", result.stderr)
+
+    def test_same_account_on_two_lines_is_kept_once(self) -> None:
+        twin = OTPAUTH_URI.replace("algorithm=SHA256", "algorithm=sha256")
+        result = run("decode", stdin=f"{OTPAUTH_URI}\n{twin}\n")
+        self.assertEqual(result.code, 0)
+        self.assertIn("1 account(s), 1 duplicate account(s) kept once.", result.stderr)
+        self.assertEqual(result.stdout.count("bob"), 1)
+
+    def test_bom_at_any_line_start_is_ignored(self) -> None:
+        result = run("decode", stdin=f"\ufeff{GA_URI}\n\ufeff{OTPAUTH_URI}\n")
+        self.assertEqual(result.code, 0, result.stderr)
+        self.assertIn("2 account(s)", result.stderr)
 
     def test_reads_a_file(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
