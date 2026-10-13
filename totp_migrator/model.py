@@ -41,6 +41,11 @@ class TotpAccount:
 
     def __post_init__(self) -> None:
         check_label_text(self.name, self.issuer)
+        if not self.name.strip():
+            raise UnsupportedValue("account has no name")
+        if ":" in self.issuer:
+            # The Key Uri Format forbids this; a colon would split the label wrongly.
+            raise UnsupportedValue("issuer contains ':'")
         if not MIN_SECRET_BYTES <= len(self.secret) <= MAX_SECRET_BYTES:
             raise UnsupportedValue(
                 f"secret must be {MIN_SECRET_BYTES}-{MAX_SECRET_BYTES} bytes long"
@@ -124,16 +129,12 @@ def split_label(label: str, issuer: str) -> tuple[str, str]:
 
 
 def check_label_text(name: str, issuer: str) -> None:
-    """Reject names and issuers that are empty, huge, or could spoof a terminal."""
-    _check_text("name", name, required=True)
-    _check_text("issuer", issuer, required=False)
-    if ":" in issuer:
-        raise MigratorError("account issuer must not contain ':'")
+    """Reject names and issuers that are huge or could spoof a terminal."""
+    _check_text("name", name)
+    _check_text("issuer", issuer)
 
 
-def _check_text(what: str, value: str, *, required: bool) -> None:
-    if required and not value.strip():
-        raise MigratorError(f"account {what} is empty")
+def _check_text(what: str, value: str) -> None:
     if len(value) > MAX_TEXT_LENGTH:
         raise MigratorError(f"account {what} is longer than {MAX_TEXT_LENGTH} characters")
     if any(unicodedata.category(char) in _FORBIDDEN_CATEGORIES for char in value):
@@ -141,4 +142,4 @@ def _check_text(what: str, value: str, *, required: bool) -> None:
 
 
 def _label(issuer: str, name: str) -> str:
-    return f"{issuer}:{name}" if issuer else name
+    return ":".join(part for part in (issuer, name) if part) or "unnamed"

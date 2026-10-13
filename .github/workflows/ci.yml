@@ -34,7 +34,7 @@ jobs:
       - uses: astral-sh/ruff-action@v3
         with:
           version: "0.14.0"
-      - run: ruff check .
+          args: check --output-format github
       - run: ruff format --check .
 
   secrets:
