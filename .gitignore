@@ -218,3 +218,12 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# Migration data holds TOTP secrets. Never commit it.
+accounts.txt
+*.uris
+items.jsonl
+bitwarden.json
+aegis.json
+accounts.json
+qr-*.png

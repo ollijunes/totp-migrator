@@ -1,0 +1,40 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "totp-migrator"
+description = "Local-first TOTP migrator: Google Authenticator and otpauth:// to 1Password, Bitwarden/Vaultwarden, and Aegis."
+readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [{ name = "Olli Junes" }]
+requires-python = ">=3.10"
+dependencies = []
+dynamic = ["version"]
+keywords = ["totp", "2fa", "google-authenticator", "vaultwarden", "bitwarden", "aegis", "1password", "self-hosted"]
+classifiers = [
+  "Environment :: Console",
+  "Programming Language :: Python :: 3",
+  "Topic :: Security",
+  "Topic :: Utilities",
+]
+
+[project.urls]
+Repository = "https://github.com/ollijunes/totp-migrator"
+
+[project.scripts]
+totp-migrator = "totp_migrator.cli:main"
+
+[tool.setuptools]
+packages = ["totp_migrator"]
+
+[tool.setuptools.dynamic]
+version = { attr = "totp_migrator.__version__" }
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "BLE", "UP", "SIM", "RUF"]
