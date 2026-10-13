@@ -1,86 +1,111 @@
+<div align="center">
+
 # totp-migrator
 
-Move your two-factor (TOTP) accounts out of Google Authenticator, or out of
-any `otpauth://` URIs, into 1Password, Bitwarden/Vaultwarden, or Aegis,
-without sending them anywhere.
+### Move your 2FA codes out of Google Authenticator without trusting a website.
 
-- **Offline.** No network code. The tool reads a file or a pipe and writes a file.
-- **Secrets hidden by default.** Output shows issuer, account name and
-  parameters. Secrets and current codes appear only with `--reveal`
-  (`decode --json --reveal` also includes the full URI).
-- **Strict.** An unknown protobuf field, a missing QR code from a multi-QR
-  export, or a malformed URI stops the run instead of being guessed at.
-- **No dependencies.** Python 3.10+ standard library only.
+**Offline. No dependencies. Secrets stay hidden unless you ask.**
 
-## Install
+[![CI](https://img.shields.io/github/actions/workflow/status/ollijunes/totp-migrator/ci.yml?branch=main&style=flat-square&label=CI)](https://github.com/ollijunes/totp-migrator/actions/workflows/ci.yml)
+[![Python](https://img.shields.io/badge/python-3.10%2B-3776AB?style=flat-square&logo=python&logoColor=white)](pyproject.toml)
+[![Dependencies](https://img.shields.io/badge/dependencies-0-2ea44f?style=flat-square)](pyproject.toml)
+[![Network](https://img.shields.io/badge/network-none-2ea44f?style=flat-square)](SECURITY.md)
+[![License](https://img.shields.io/github/license/ollijunes/totp-migrator?style=flat-square)](LICENSE)
+
+[Quick start](#quick-start) · [Export targets](#export-targets) · [How it works](#how-it-works) · [Privacy model](#privacy-model) · [FAQ](#faq) · [Security](SECURITY.md)
+
+<img src="docs/demo.svg" alt="totp-migrator decoding a Google Authenticator export and writing a Bitwarden import file, with secrets hidden" width="820">
+
+</div>
+
+---
+
+Google Authenticator exports your accounts as QR codes in its own format.
+1Password, Bitwarden, Vaultwarden and Aegis can't read them. Most converters
+are web pages, so you end up pasting every two-factor secret you own into
+somebody else's JavaScript.
+
+`totp-migrator` does the conversion on your machine. It reads Google
+Authenticator export QR codes (`otpauth-migration://`) and standard
+`otpauth://` URIs, and writes an import file for the app you're moving to.
+It is one small Python package with no dependencies, so you can read all of
+it before you trust it with your secrets.
+
+| Reads | Writes |
+|---|---|
+| Google Authenticator exports, single or multi-QR | **1Password** item templates for `op item create` |
+| `otpauth://totp/...` URIs from any authenticator | **Bitwarden / Vaultwarden** unencrypted JSON |
+| | **Aegis** plain vault |
+| | Plain `otpauth://` list, or structured JSON |
+
+## Quick start
 
 ```sh
 pipx install git+https://github.com/ollijunes/totp-migrator
 ```
 
-Or run it from a clone without installing anything:
+Or run it from a clone, with nothing installed:
 
 ```sh
-git clone https://github.com/ollijunes/totp-migrator
-cd totp-migrator
+git clone https://github.com/ollijunes/totp-migrator && cd totp-migrator
 python3 -m totp_migrator --help
 ```
 
-## 1. Get the URIs
-
-**Google Authenticator:** open the app, go to *Transfer accounts* →
-*Export accounts*, and pick the accounts. The app shows one QR code, or
-several for many accounts. Each QR code holds one `otpauth-migration://offline?data=...` URI.
-
-Decode the QR codes on your own machine. For example, with
-[zbar](https://github.com/mchehab/zbar) and a photo or screenshot of each code:
+**1. Get the URIs.** In Google Authenticator, open *Transfer accounts →
+Export accounts* and pick the accounts. Decode the QR codes on your own
+machine, for example with [zbar](https://github.com/mchehab/zbar):
 
 ```sh
 umask 077   # files created from here on are readable only by you
 zbarimg --raw -q qr-1.png qr-2.png > accounts.txt
 ```
 
-**Other apps:** many authenticators can export `otpauth://totp/...` URIs.
-Put them in the same file, one per line. Both kinds can be mixed.
+URIs from other apps (`otpauth://totp/...`) can go in the same file, one
+per line.
 
-Images and text files of QR codes hold your secrets, just like the export
-files below. Delete them when you are done.
-
-## 2. Check what was read
+**2. Check what was read.** Nothing secret is printed:
 
 ```sh
 totp-migrator decode accounts.txt
+pbpaste | totp-migrator decode    # or straight from the clipboard
 ```
 
-```
-ISSUER   NAME                ALGORITHM  DIGITS  PERIOD
-Example  alice@example.test  SHA1       6       30
-GitLab   alice               SHA1       6       30
-2 account(s) from 2 Google Authenticator QR code(s).
-skipped line 2, account 1 (Legacy:bob): only TOTP accounts are supported
-Secrets are hidden. Add --reveal to show them.
-```
-
-Without a file argument, the tool reads a pipe, for example straight from
-the clipboard:
+**3. Export, import, verify, delete.**
 
 ```sh
-pbpaste | totp-migrator decode            # macOS
-wl-paste | totp-migrator decode           # Linux, Wayland
+totp-migrator export -f bitwarden -o vault.json accounts.txt
 ```
 
-It refuses to read from an interactive terminal, because pasted URIs would
-be echoed on screen and stay in the scrollback. It also refuses URIs as
-command-line arguments, which end up in shell history.
+Import the file, compare a few codes between the old and new app, delete
+the file and the QR images, and only then remove the accounts from Google
+Authenticator.
 
-## 3. Export
+## Export targets
 
 `export` writes a new file and never overwrites an existing one. On Linux
-and macOS the file is readable only by you (mode `0600`); on Windows it
+and macOS the file is readable only by you (mode `0600`). On Windows it
 gets the permissions of its folder, so write it inside your user profile.
-`export` refuses to write secrets to the terminal unless you add `--reveal`.
+It refuses to print secrets to the terminal unless you add `--reveal`.
 
-### 1Password
+<details open>
+<summary><b>Bitwarden and Vaultwarden</b></summary>
+
+```sh
+totp-migrator export -f bitwarden -o vault.json accounts.txt
+```
+
+In the web vault, open **Tools → Import data**, choose **Bitwarden (json)**
+and select `vault.json`. A self-hosted Vaultwarden works the same way. With
+the Bitwarden CLI: `bw import bitwardenjson vault.json`.
+
+Each account becomes a Login item with the username and a full
+`otpauth://` authenticator key, so non-default digits, periods and
+algorithms survive.
+
+</details>
+
+<details>
+<summary><b>1Password</b></summary>
 
 ```sh
 totp-migrator export -f 1password -o items.jsonl accounts.txt
@@ -90,31 +115,16 @@ while IFS= read -r item; do
 done < items.jsonl
 ```
 
-Each line is a 1Password item template (a Login with a one-time password
-field). The 1Password CLI reads the template from stdin, so the secret never
-appears in a process argument. `op item create --dry-run` previews the item
-instead of creating it, but the preview prints every field, including the
-one-time password URI, on your terminal.
+Each line is a 1Password item template: a Login with a one-time password
+field. The 1Password CLI reads it from stdin, so the secret never appears
+in a process argument. `op item create --dry-run` previews an item without
+creating it, but the preview prints every field, including the one-time
+password URI.
 
-### Bitwarden and Vaultwarden
+</details>
 
-```sh
-totp-migrator export -f bitwarden -o bitwarden.json accounts.txt
-```
-
-In the web vault, open **Tools → Import data**, choose the format
-**Bitwarden (json)**, and select `bitwarden.json`. This works the same for
-a self-hosted Vaultwarden server. With the Bitwarden CLI:
-
-```sh
-bw import bitwardenjson bitwarden.json
-```
-
-Each account becomes a Login item with the username and an authenticator
-key (a full `otpauth://` URI, so non-default digits, periods and algorithms
-survive).
-
-### Aegis
+<details>
+<summary><b>Aegis</b></summary>
 
 ```sh
 totp-migrator export -f aegis -o aegis.json accounts.txt
@@ -122,27 +132,58 @@ totp-migrator export -f aegis -o aegis.json accounts.txt
 
 Copy the file to your phone, open Aegis's import screen (under
 **Settings → Import & Export**), pick **Aegis** as the source app, and
-select the file. It is an unencrypted Aegis vault.
+select the file. It is an unencrypted Aegis vault in the format documented
+in Aegis's `docs/vault.md`.
 
-### Plain URIs or JSON
+</details>
+
+<details>
+<summary><b>Plain URIs or JSON</b></summary>
 
 ```sh
 totp-migrator export -f otpauth -o accounts.uris accounts.txt
 totp-migrator export -f json -o accounts.json accounts.txt
 ```
 
-`otpauth` writes one URI per line with every parameter spelled out, for any
-app that accepts them. `json` writes issuer, name, base32 secret, algorithm,
-digits, period and URI for each account, for your own scripts.
+`otpauth` writes one URI per line with every parameter spelled out.
+`json` writes issuer, name, base32 secret, algorithm, digits, period and
+URI for each account, for your own scripts.
 
-### After the import
+</details>
 
-1. Compare a few codes in the new app with the old one. `decode --reveal`
-   prints the current code for each account if you want a third opinion.
-2. Delete the export file and the QR images or URI file.
-3. Only then remove the accounts from the old app.
+The formats follow each app's own unencrypted export format. The tests
+check their structure, not an import into every app version, so compare a
+few codes after importing, and please
+[open an issue](https://github.com/ollijunes/totp-migrator/issues/new/choose)
+if an app rejects a file.
 
-## What is supported
+## How it works
+
+```mermaid
+flowchart LR
+    A["Google Authenticator QR<br/><code>otpauth-migration://</code>"] --> P
+    B["Other apps<br/><code>otpauth://totp/</code>"] --> P
+    P["Strict parsers"] --> M["TotpAccount<br/>(secret hidden from repr)"]
+    P --> S["Skipped account<br/>HOTP, MD5, ..."]
+    M --> E["Exporter"] --> F["Import file<br/>O_EXCL, 0600"]
+    M --> R{"Redaction guard"}
+    S --> R
+    R --> T["Terminal:<br/>names and parameters only"]
+```
+
+- **Parsers.** The Google payload is protobuf, decoded by a small
+  hand-written reader. There is no official schema; the field numbers
+  match two independent reverse-engineered descriptions (Aegis's
+  `google_auth.proto` and qistoph's `OtpMigration.proto`). Anything the
+  parser doesn't recognise stops the run instead of being guessed at.
+- **One model.** Every account becomes a `TotpAccount`. Accounts the tool
+  won't migrate become a `SkippedAccount` with a reason, so you know
+  exactly what to move by hand.
+- **Exporters** are plain functions from accounts to file contents.
+- **Redaction guard.** Every line that mentions an account is checked
+  against every secret in the input before it's printed.
+
+**Supported input**
 
 | Input | Notes |
 |---|---|
@@ -151,56 +192,102 @@ digits, period and URI for each account, for your own scripts.
 
 HOTP (counter-based) accounts, MD5, missing names and other unusual values
 are reported as unsupported, with the account's position and name. `export`
-stops when it finds one. Pass `--skip-unsupported` to export the rest and
-move those accounts by hand. Secrets shorter than 8 bytes (64 bits) or
-longer than 256 are rejected as malformed.
-
-Google Authenticator's export carries no period, so those accounts get
-30 seconds, which is what the app itself uses.
-
-The output formats follow each app's own unencrypted export format. The
-tests check their structure, not an import into every app version, so
-compare a few codes after importing, and please open an issue if an app
-rejects a file.
-
-The Google export format has no published schema. The field numbers here
-match two independent reverse-engineered descriptions: Aegis's
-`google_auth.proto` and qistoph's `OtpMigration.proto`.
+stops when it finds one; pass `--skip-unsupported` to export the rest.
+Secrets shorter than 8 bytes (64 bits) or longer than 256 are rejected as
+malformed. Google's export carries no period, so those accounts get the
+30 seconds the app itself uses.
 
 ## Privacy model
 
-Read [SECURITY.md](SECURITY.md) for the full list. In short:
+[SECURITY.md](SECURITY.md) has the full list of guarantees and limits. In
+short:
 
-- No network access. A test fails if any module imports a networking
-  library, and the CLI tests run with sockets disabled.
-- Without `--reveal`, every line the tool prints first passes a check that
-  refuses output containing any secret in base32, hex, base64 or raw form
-  (ignoring case, spaces, hyphens and escapes), or any `otpauth` URI. A bug
-  that pulled a secret into a message would fail instead of printing it.
-- Error messages give the line and account number and a fixed reason,
-  never input text. Usage errors show the usage line, not the mistyped
-  value, and the output path is never printed back.
-- Account names with control, bidi-override or zero-width characters are
-  rejected, so a crafted QR code can't disguise one account as another.
-- Account objects hide the secret from `repr()`, so it cannot appear in a
-  traceback or log line. Unexpected exceptions print only their type.
-- Export files are created with `O_EXCL`, and with mode `0600` on Linux
-  and macOS.
+- **No network.** A test fails if any module imports a networking library,
+  and the CLI tests run with sockets disabled.
+- **Nothing secret on screen by default.** Without `--reveal`, every line
+  that mentions an account must pass a guard that refuses any secret in
+  base32, hex, base64 or raw form, matched exactly, with separators
+  removed, and reduced to letters and digits. A bug that pulled a secret
+  into a message fails instead of printing it.
+- **No secrets in shell history.** URIs are read from a file or a pipe.
+  Arguments that look like URIs are refused, and so is reading from an
+  interactive terminal, where pasted URIs would echo. Usage errors don't
+  repeat what you typed, and the output path isn't printed back.
+- **No spoofed names.** Account names with control, bidi-override or
+  zero-width characters are rejected, so a crafted QR code can't disguise
+  one account as another.
+- **Careful files.** `O_EXCL`, mode `0600` on Linux and macOS, every
+  message checked before the file exists, and a failed write removes the
+  file.
 
-What the tool cannot protect: the export files themselves, the QR images,
-your terminal scrollback after `--reveal`, and the apps you import into.
+What it can't protect: the export file once written, the QR images, your
+terminal after `--reveal`, and the apps you import into.
+
+## FAQ
+
+<details>
+<summary><b>Why not use one of the web-based converters?</b></summary>
+
+Because the input is every 2FA secret you have. Even a page that claims to
+run locally in the browser can change what it ships tomorrow. This tool
+has no network code at all, and it is small enough to read first.
+
+</details>
+
+<details>
+<summary><b>Can I check the codes before I delete anything?</b></summary>
+
+Yes. `decode --reveal` prints the current code for each account next to
+its secret, after a warning. Compare them with the old and the new app.
+
+</details>
+
+<details>
+<summary><b>An account was skipped. What now?</b></summary>
+
+The message says which line and account, and why. HOTP and MD5 accounts
+are rare; set them up again in the new app from the service's 2FA settings,
+or copy them by hand from the old app.
+
+</details>
+
+<details>
+<summary><b>The tool says an export is incomplete.</b></summary>
+
+Google Authenticator splits large exports into several QR codes. All of
+them must be in the input, or accounts would silently go missing. Scan the
+remaining codes and add them to the same file.
+
+</details>
+
+<details>
+<summary><b>Does it work on Windows?</b></summary>
+
+Yes, CI runs on Windows, macOS and Linux with Python 3.10 to 3.14. On
+Windows the export file inherits its folder's permissions instead of
+getting mode `0600`.
+
+</details>
+
+<details>
+<summary><b>Can it import straight into my vault?</b></summary>
+
+No, on purpose. Talking to a vault means network access and credentials.
+The tool writes a file; your vault's own importer reads it.
+
+</details>
 
 ## Development
 
 ```sh
-python3 -m unittest          # all tests, standard library only
+python3 -m unittest            # standard library only
+python3 docs/render_demo.py    # regenerate docs/demo.svg from a real run
 ```
 
 Tests use only synthetic secrets and the published RFC 4226 and RFC 6238
-test vectors. Never commit a real QR code, URI or export file, not even in
-an issue. If you need to report a parsing bug, describe the field layout or
-build a synthetic payload with `tests/fixtures.py`.
+test vectors. See [CONTRIBUTING.md](CONTRIBUTING.md). Never commit or paste
+a real QR code, URI or export file, not even in an issue.
 
 ## License
 
-MIT
+[MIT](LICENSE)
