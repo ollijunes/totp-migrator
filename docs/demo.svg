@@ -1,0 +1,25 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="817" height="374" viewBox="0 0 817 374" role="img" aria-label="totp-migrator decoding a Google Authenticator export and writing a Bitwarden import file, with secrets hidden">
+<rect width="817" height="374" rx="10" fill="#0d1117" stroke="#30363d"/>
+<path d="M10 0.5h797a9.5 9.5 0 0 1 9.5 9.5v26h-816v-26a9.5 9.5 0 0 1 9.5-9.5z" fill="#161b22"/>
+<circle cx="22" cy="18" r="6" fill="#ff5f57"/>
+<circle cx="42" cy="18" r="6" fill="#febc2e"/>
+<circle cx="62" cy="18" r="6" fill="#28c840"/>
+<text x="408.5" y="23" fill="#8b949e" font-family="ui-sans-serif, -apple-system, Segoe UI, sans-serif" font-size="13" text-anchor="middle">totp-migrator</text>
+<g font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace" font-size="14">
+<text x="22" y="56"><tspan fill="#3fb950">$</tspan> <tspan fill="#e6edf3" font-weight="600">pbpaste | totp-migrator decode</tspan></text>
+<text x="22" y="77" fill="#79c0ff" font-weight="600" xml:space="preserve">ISSUER          NAME               ALGORITHM  DIGITS  PERIOD</text>
+<text x="22" y="98" fill="#e6edf3" xml:space="preserve">GitHub          alice@example.org  SHA1       6       30</text>
+<text x="22" y="119" fill="#e6edf3" xml:space="preserve">Nextcloud       alice              SHA1       6       30</text>
+<text x="22" y="140" fill="#e6edf3" xml:space="preserve">Home Assistant  admin              SHA1       6       30</text>
+<text x="22" y="161" fill="#8b949e" xml:space="preserve">3 account(s) from 2 Google Authenticator QR code(s).</text>
+<text x="22" y="182" fill="#d29922" xml:space="preserve">skipped line 2, account 2 (Legacy VPN:ops): only TOTP accounts are supported</text>
+<text x="22" y="203" fill="#8b949e" xml:space="preserve">Secrets are hidden. Add --reveal to show them.</text>
+<text x="22" y="224" fill="#e6edf3" xml:space="preserve"></text>
+<text x="22" y="245"><tspan fill="#3fb950">$</tspan> <tspan fill="#e6edf3" font-weight="600">pbpaste | totp-migrator export -f bitwarden -o vault.json --skip-unsupported</tspan></text>
+<text x="22" y="266" fill="#8b949e" xml:space="preserve">3 account(s) from 2 Google Authenticator QR code(s).</text>
+<text x="22" y="287" fill="#d29922" xml:space="preserve">skipped line 2, account 2 (Legacy VPN:ops): only TOTP accounts are supported</text>
+<text x="22" y="308" fill="#8b949e" xml:space="preserve">Secrets are hidden. Add --reveal to show them.</text>
+<text x="22" y="329" fill="#8b949e" xml:space="preserve">Wrote the bitwarden import file (readable only by you). It holds your secrets:</text>
+<text x="22" y="350" fill="#8b949e" xml:space="preserve">  import it, check the codes, then delete it.</text>
+</g>
+</svg>
