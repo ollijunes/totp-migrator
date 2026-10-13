@@ -49,7 +49,9 @@ def export_aegis(
     accounts: Sequence[TotpAccount],
     new_uuid: Callable[[], uuid.UUID] = uuid.uuid4,
 ) -> str:
-    """An unencrypted Aegis vault (Import > Aegis, plain JSON).
+    """An unencrypted Aegis vault, as documented in Aegis's docs/vault.md.
+
+    Null header slots and params mark the vault as not encrypted.
 
     Every entry gets a fresh random UUID, as Aegis does for new entries, so
     an import never collides with an entry that is already in the vault.
@@ -63,19 +65,22 @@ def export_aegis(
             "note": "",
             "favorite": False,
             "icon": None,
+            "icon_mime": None,
+            "icon_hash": None,
             "info": {
                 "secret": account.secret_base32,
                 "algo": account.algorithm,
                 "digits": account.digits,
                 "period": account.period,
             },
+            "groups": [],
         }
         for account in accounts
     ]
     document = {
         "version": 1,
         "header": {"slots": None, "params": None},
-        "db": {"version": 2, "entries": entries},
+        "db": {"version": 3, "entries": entries, "groups": []},
     }
     return _dump(document)
 
@@ -126,7 +131,7 @@ def export_1password(accounts: Sequence[TotpAccount]) -> str:
                     "value": account.name,
                 },
                 {
-                    "id": "one-time-password",
+                    "id": "otp",
                     "type": "OTP",
                     "label": "one-time password",
                     "value": build_otpauth_uri(account),

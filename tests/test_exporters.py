@@ -58,11 +58,14 @@ class ExporterTests(unittest.TestCase):
         document = json.loads(export_aegis(ACCOUNTS))
         self.assertEqual(document["version"], 1)
         self.assertEqual(document["header"], {"slots": None, "params": None})
-        self.assertEqual(document["db"]["version"], 2)
+        self.assertEqual(document["db"]["version"], 3)
+        self.assertEqual(document["db"]["groups"], [])
         entries = document["db"]["entries"]
         self.assertEqual(len(entries), 2)
         alice = entries[0]
         self.assertEqual(alice["type"], "totp")
+        self.assertEqual(alice["groups"], [])
+        self.assertIsNone(alice["icon_mime"])
         self.assertEqual((alice["issuer"], alice["name"]), ("Example", "alice@example.test"))
         self.assertEqual(
             alice["info"],
