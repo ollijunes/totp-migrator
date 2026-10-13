@@ -1,10 +1,6 @@
 <div align="center">
 
-# totp-migrator
-
-### Move your 2FA codes out of Google Authenticator without trusting a website.
-
-**Offline. No dependencies. Secrets stay hidden unless you ask.**
+<img src="docs/banner.png" alt="totp-migrator: move your 2FA codes out of Google Authenticator without trusting a website. Offline, no dependencies, secrets hidden." width="100%">
 
 [![CI](https://img.shields.io/github/actions/workflow/status/ollijunes/totp-migrator/ci.yml?branch=main&style=flat-square&label=CI)](https://github.com/ollijunes/totp-migrator/actions/workflows/ci.yml)
 [![Python](https://img.shields.io/badge/python-3.10%2B-3776AB?style=flat-square&logo=python&logoColor=white)](pyproject.toml)
@@ -19,6 +15,12 @@
 </div>
 
 ---
+
+> My push to improve my own privacy made me question how much I could
+> trust Google Authenticator with my 2FA secrets. So I built a tool to move
+> them out.
+>
+> — Olli Junes
 
 Google Authenticator exports your accounts as QR codes in its own format.
 1Password, Bitwarden, Vaultwarden and Aegis can't read them. Most converters
