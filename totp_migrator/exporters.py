@@ -164,9 +164,18 @@ def export_lastpass(accounts: Sequence[TotpAccount]) -> str:
     return buffer.getvalue()
 
 
+# Spreadsheets read a cell that starts with one of these as a formula. The
+# file is meant for LastPass, not Excel, but a crafted QR label should not be
+# able to run anything if someone opens it there. The name is not rewritten
+# (that would change it in LastPass too); the account is left out instead.
+_FORMULA_PREFIXES = ("=", "+", "-", "@")
+
+
 def lastpass_limit(account: TotpAccount) -> str | None:
     if (account.algorithm, account.digits, account.period) != ("SHA1", 6, DEFAULT_PERIOD):
         return "LastPass stores only SHA1, 6-digit, 30-second codes"
+    if account.name.startswith(_FORMULA_PREFIXES) or account.title.startswith(_FORMULA_PREFIXES):
+        return "name starts with a character spreadsheets treat as a formula; add it by hand"
     return None
 
 

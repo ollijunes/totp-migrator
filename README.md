@@ -157,8 +157,9 @@ unsupported; pass `--skip-unsupported` to export the rest. LastPass's help
 pages describe TOTP in vault items as a feature some plans and admin
 policies can turn off, so check that your account shows the codes.
 
-Don't open the file in a spreadsheet app: it holds your secrets, and
-spreadsheets can treat a name starting with `=` as a formula.
+Don't open the file in a spreadsheet app: it holds your secrets. Accounts
+whose name starts with `=`, `+`, `-` or `@` are left out of this format and
+listed, because spreadsheets treat such cells as formulas; add those by hand.
 
 </details>
 
