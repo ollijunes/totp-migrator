@@ -207,6 +207,18 @@ class ExportTests(RedactionTestCase):
             self.assertIn(secret_forms(SYNTHETIC_SECRET)[0], content)
             self.assertNotIn(secret_forms(SECOND_SECRET)[0], content)
 
+    def test_protonpass_keeps_non_default_accounts(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory, "protonpass.csv")
+            result = run("export", "-f", "protonpass", "-o", str(path), "--skip-unsupported")
+            self.assertEqual(result.code, 0, result.stderr)
+            self.assertIn("2 account(s)", result.stderr)
+            self.assertNotIn("skipped for protonpass", result.stderr)
+            self.assert_no_secrets(result.everything)
+            content = path.read_text(encoding="utf-8")
+            self.assertIn(secret_forms(SYNTHETIC_SECRET)[0], content)
+            self.assertIn(secret_forms(SECOND_SECRET)[0], content)
+
     def test_all_accounts_skipped_still_lists_them(self) -> None:
         hotp_only = ga_uri(ga_payload(ga_account(name=b"hotp-user", otp_type=1)))
         with tempfile.TemporaryDirectory() as directory:
