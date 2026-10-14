@@ -210,7 +210,7 @@ URI for each account, for your own scripts.
 | Bitwarden / Vaultwarden | Imported on every CI run into Vaultwarden 1.37.4 with the official Bitwarden CLI 2026.9.1. Every code is checked against this tool's own TOTP, including SHA256 / 8-digit / 60-second and SHA512 accounts. |
 | LastPass | On every CI run, the CSV is read by the Bitwarden CLI's LastPass importer and every code is checked. Not yet imported into LastPass itself. |
 | Aegis | Matches Aegis's documented plain vault format (`docs/vault.md`, db version 3). Not yet imported. |
-| Proton Pass | Matches the header row of Proton's import template, and the importer source (`packages/pass/lib/import/providers/protonpass/` in ProtonMail/WebClients) parses the `totp` column as a full `otpauth://` URI. Not yet imported. |
+| Proton Pass | On every CI run, the CSV goes through Proton Pass's own import path, replayed with the same `papaparse` and `otpauth` packages Proton Pass uses, and every code and parameter is checked. Not yet imported into Proton Pass itself. |
 
 Whichever app you use, compare a few codes after importing, and please
 [open an issue](https://github.com/ollijunes/totp-migrator/issues/new/choose)
@@ -342,6 +342,12 @@ The tool writes a file; your vault's own importer reads it.
 ```sh
 python3 -m unittest            # standard library only
 python3 docs/render_demo.py    # regenerate docs/demo.svg from a real run
+```
+
+The Proton Pass test needs Node and npm; CI runs it on every push. Locally:
+
+```sh
+python3 integration/protonpass_import.py
 ```
 
 The Vaultwarden import test needs Docker, Node and the `cryptography`
