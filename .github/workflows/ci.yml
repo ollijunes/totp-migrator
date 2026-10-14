@@ -63,6 +63,22 @@ jobs:
         env:
           NODE_EXTRA_CA_CERTS: ${{ runner.temp }}/vw/ssl/cert.pem
 
+  # Proton Pass has nothing to import into from CI, so its import path is
+  # replayed with the packages Proton Pass itself uses (pinned in the script).
+  import-protonpass:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - run: python integration/protonpass_import.py
+
   secrets:
     runs-on: ubuntu-latest
     env:

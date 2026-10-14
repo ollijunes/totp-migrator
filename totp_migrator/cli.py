@@ -88,7 +88,7 @@ def _build_parser() -> argparse.ArgumentParser:
         prog="totp-migrator",
         description=(
             "Move TOTP accounts out of Google Authenticator or otpauth:// URIs "
-            "into 1Password, Bitwarden/Vaultwarden, Aegis, LastPass, or plain URIs. "
+            "into 1Password, Bitwarden/Vaultwarden, Aegis, LastPass, Proton Pass, or plain URIs. "
             "Offline only. Secrets stay hidden unless you pass --reveal."
         ),
     )

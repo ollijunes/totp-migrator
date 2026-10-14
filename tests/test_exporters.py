@@ -15,7 +15,9 @@ from totp_migrator.exporters import (
     export_json,
     export_lastpass,
     export_otpauth,
+    export_protonpass,
     lastpass_limit,
+    protonpass_limit,
 )
 from totp_migrator.model import TotpAccount
 from totp_migrator.otpauth import parse_otpauth_uri
@@ -140,6 +142,29 @@ class ExporterTests(unittest.TestCase):
                 account = TotpAccount(name, issuer, SYNTHETIC_SECRET)
                 self.assertIn("formula", lastpass_limit(account))
         self.assertIsNone(lastpass_limit(TotpAccount("a=b", "Example", SYNTHETIC_SECRET)))
+
+    def test_protonpass_generic_csv(self) -> None:
+        tricky = TotpAccount('name, with "quotes"', "ACME, Inc.", SYNTHETIC_SECRET)
+        rows = list(csv.DictReader(io.StringIO(export_protonpass([*ACCOUNTS, tricky]))))
+        self.assertEqual(
+            list(rows[0]),
+            ["name", "url", "email", "username", "password", "note", "totp", "vault"],
+        )
+        alice, bob, odd = rows
+        self.assertEqual(alice["name"], "Example (alice@example.test)")
+        self.assertEqual(alice["username"], "alice@example.test")
+        self.assertEqual((alice["email"], alice["password"], alice["vault"]), ("", "", ""))
+        self.assertEqual(parse_otpauth_uri(alice["totp"]), ACCOUNTS[0])
+        # Non-default parameters travel inside the URI.
+        self.assertEqual(parse_otpauth_uri(bob["totp"]), ACCOUNTS[1])
+        self.assertEqual((odd["username"], odd["name"]), (tricky.name, tricky.title))
+
+    def test_protonpass_refuses_only_formula_like_names(self) -> None:
+        self.assertIs(LIMITS["protonpass"], protonpass_limit)
+        self.assertIsNone(protonpass_limit(ACCOUNTS[0]))
+        self.assertIsNone(protonpass_limit(ACCOUNTS[1]))  # SHA256 / 8 digits / 60 s is fine
+        self.assertIn("formula", protonpass_limit(TotpAccount("=1+1", "", SYNTHETIC_SECRET)))
+        self.assertIn("formula", protonpass_limit(TotpAccount("bob", "@Evil", SYNTHETIC_SECRET)))
 
     def test_unicode_survives(self) -> None:
         account = TotpAccount("käyttäjä", "Ääkköset Oy", SYNTHETIC_SECRET)

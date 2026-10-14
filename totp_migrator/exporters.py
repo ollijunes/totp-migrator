@@ -165,17 +165,48 @@ def export_lastpass(accounts: Sequence[TotpAccount]) -> str:
 
 
 # Spreadsheets read a cell that starts with one of these as a formula. The
-# file is meant for LastPass, not Excel, but a crafted QR label should not be
-# able to run anything if someone opens it there. The name is not rewritten
-# (that would change it in LastPass too); the account is left out instead.
+# CSV files are meant for a password manager, not Excel, but a crafted QR
+# label should not be able to run anything if someone opens one there. The
+# name is not rewritten (that would change it in the vault too); the account
+# is left out instead.
 _FORMULA_PREFIXES = ("=", "+", "-", "@")
+_FORMULA_REASON = "name starts with a character spreadsheets treat as a formula; add it by hand"
 
 
 def lastpass_limit(account: TotpAccount) -> str | None:
     if (account.algorithm, account.digits, account.period) != ("SHA1", 6, DEFAULT_PERIOD):
         return "LastPass stores only SHA1, 6-digit, 30-second codes"
+    return _formula_limit(account)
+
+
+# The header row of Proton's own template, pass.proton.me/assets/protonpass-import.csv.
+PROTONPASS_COLUMNS = ("name", "url", "email", "username", "password", "note", "totp", "vault")
+
+
+def export_protonpass(accounts: Sequence[TotpAccount]) -> str:
+    """Proton Pass generic CSV, with a full otpauth:// URI in the ``totp`` column.
+
+    Proton Pass parses the URI (packages/pass/lib/otp/otp.ts in ProtonMail/
+    WebClients), so algorithm, digits and period survive. The ``vault``
+    column is left empty; the web app asks which vault to import into.
+    """
+    buffer = io.StringIO()
+    writer = csv.writer(buffer, lineterminator="\n")
+    writer.writerow(PROTONPASS_COLUMNS)
+    for account in accounts:
+        writer.writerow(
+            [account.title, "", "", account.name, "", "", build_otpauth_uri(account), ""]
+        )
+    return buffer.getvalue()
+
+
+def protonpass_limit(account: TotpAccount) -> str | None:
+    return _formula_limit(account)
+
+
+def _formula_limit(account: TotpAccount) -> str | None:
     if account.name.startswith(_FORMULA_PREFIXES) or account.title.startswith(_FORMULA_PREFIXES):
-        return "name starts with a character spreadsheets treat as a formula; add it by hand"
+        return _FORMULA_REASON
     return None
 
 
@@ -184,12 +215,13 @@ EXPORTERS: dict[str, Exporter] = {
     "bitwarden": export_bitwarden,
     "aegis": export_aegis,
     "lastpass": export_lastpass,
+    "protonpass": export_protonpass,
     "otpauth": export_otpauth,
     "json": export_json,
 }
 
 # Formats that cannot represent every valid account.
-LIMITS: dict[str, Limit] = {"lastpass": lastpass_limit}
+LIMITS: dict[str, Limit] = {"lastpass": lastpass_limit, "protonpass": protonpass_limit}
 
 
 def _dump(document: object) -> str:
