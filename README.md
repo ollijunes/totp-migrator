@@ -177,8 +177,8 @@ choose **Generic CSV** and select the file. The columns follow Proton's own
 [CSV template](https://pass.proton.me/assets/protonpass-import.csv). Each
 account becomes a Login item with the account name as the username and a full
 `otpauth://` URI in the `totp` column, so non-default digits, periods and
-algorithms survive. The items land in a new vault named after the import
-date; move them afterwards if you want them elsewhere.
+algorithms survive. Proton Pass asks which vault to put the items in
+before it imports anything.
 
 Proton Pass also imports Bitwarden JSON, so `-f bitwarden` works too.
 
@@ -210,7 +210,7 @@ URI for each account, for your own scripts.
 | Bitwarden / Vaultwarden | Imported on every CI run into Vaultwarden 1.37.4 with the official Bitwarden CLI 2026.9.1. Every code is checked against this tool's own TOTP, including SHA256 / 8-digit / 60-second and SHA512 accounts. |
 | LastPass | On every CI run, the CSV is read by the Bitwarden CLI's LastPass importer and every code is checked. Not yet imported into LastPass itself. |
 | Aegis | Matches Aegis's documented plain vault format (`docs/vault.md`, db version 3). Not yet imported. |
-| Proton Pass | On every CI run, the CSV goes through Proton Pass's own import path, replayed with the same `papaparse` and `otpauth` packages Proton Pass uses, and every code and parameter is checked. Not yet imported into Proton Pass itself. |
+| Proton Pass | Imported into the Proton Pass web app (1.42.0, October 2026) as Generic CSV; both synthetic accounts, including a SHA256 / 8-digit / 60-second one, showed the same codes as this tool. On every CI run, the CSV also goes through Proton Pass's own import path, replayed with the same `papaparse` and `otpauth` packages Proton Pass uses, and every code and parameter is checked. |
 
 Whichever app you use, compare a few codes after importing, and please
 [open an issue](https://github.com/ollijunes/totp-migrator/issues/new/choose)

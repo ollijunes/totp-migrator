@@ -188,8 +188,7 @@ def export_protonpass(accounts: Sequence[TotpAccount]) -> str:
 
     Proton Pass parses the URI (packages/pass/lib/otp/otp.ts in ProtonMail/
     WebClients), so algorithm, digits and period survive. The ``vault``
-    column is left empty: Proton Pass then creates a vault named after the
-    import date instead of writing into an existing one.
+    column is left empty; the web app asks which vault to import into.
     """
     buffer = io.StringIO()
     writer = csv.writer(buffer, lineterminator="\n")
