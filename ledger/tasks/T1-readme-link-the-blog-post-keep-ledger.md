@@ -1,8 +1,8 @@
 # T1 README: link the blog post; keep ledger tooling out of language stats
 
-- Status: doing
+- Status: done
 - Lane: docs/blog-link-language-20261020
-- Evidence: —
+- Evidence: `python3 -m unittest` → Ran 105 tests, OK; `curl -o /dev/null -w %{http_code}` → 200 for both blog URLs. Language change shows on GitHub after merge.
 
 ## Plan
 
