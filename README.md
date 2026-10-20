@@ -8,6 +8,8 @@
 [![Network](https://img.shields.io/badge/network-none-2ea44f?style=flat-square)](SECURITY.md)
 [![License](https://img.shields.io/github/license/ollijunes/totp-migrator?style=flat-square)](LICENSE)
 
+Why I built it: [read the blog post](https://ollijunes.com/totp-migrator-google-authenticator/) · [suomeksi](https://ollijunes.com/fi/totp-migrator-google-authenticator-siirto/)
+
 [Quick start](#quick-start) · [Export targets](#export-targets) · [How it works](#how-it-works) · [Privacy model](#privacy-model) · [FAQ](#faq) · [Security](SECURITY.md)
 
 <img src="docs/demo.svg" alt="totp-migrator decoding a Google Authenticator export and writing a Bitwarden import file, with secrets hidden" width="820">
